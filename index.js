@@ -1,284 +1,208 @@
+// main.js
 require("dotenv").config();
+const fs = require("fs");
+const path = require("path");
 const { Web3 } = require("web3");
-const axios = require("axios");
-const { formatUnits } = require("ethers");
 
-// Vérifie que l'URL RPC est bien définie
-if (!process.env.RPC_URL) {
-  throw new Error("RPC_URL non définie dans le fichier .env");
+const config = require("./config");
+const { WMATIC_ADDRESS, USDC_ADDRESS, TOKEN_DECIMALS, PROFIT_THRESHOLD_USD, AAVE_FLASH_LOAN_FEE } = config;
+
+const { getPairAddress, getReserves } = require("./utils/contracts");
+const { getAmountOut, calculatePrice } = require("./utils/calculations");
+const { sendEmailNotification } = require("./utils/notifications");
+const { parseUnits, formatUnits } = require("ethers");
+
+// Logger allégé avec timestamp
+function log(...args) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}]`, ...args);
 }
 
-// Connexion au réseau
-const web3 = new Web3(process.env.RPC_URL);
+if (!process.env.RPC_URL) {
+  throw new Error("RPC_URL non définie dans le fichier .env.");
+}
+const web3 = new Web3(new Web3.providers.WebsocketProvider(process.env.RPC_URL));
 
-// ABIs des contrats
-const IUniswapV2Pair = require("./contracts/IUniswapV2Pair.json");
-const IUniswapV2Factory = require("./contracts/IUniswapV2Factory.json");
+const SWAP_EVENT_TOPIC = web3.utils.sha3("Swap(address,uint256,uint256,uint256,uint256,address)");
 
-// Event topic pour `Swap(...)`
-const SWAP_EVENT_TOPIC = web3.utils.sha3(
-  "Swap(address,uint256,uint256,uint256,uint256,address)"
-);
-
-// Factories des DEX
-const QUICKSWAP_FACTORY = "0x5757371414417b8c6caad45baef941abc7d3ab32";
-const SUSHISWAP_FACTORY = "0xc35DADB65012eC5796536bD9864eD8773aBc74C4";
-
-// Adresses des tokens
-const WMATIC = "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270";
-const USDC = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
-
-// Variables d'état
 let sushiPairAddress = "";
 let quickswapPairAddress = "";
-let lastBlockChecked = null;
-const pairsToMonitor = [];
+const pairsToMonitor = new Set();
+let subscription = null;
 
-/**
- * Récupère l'adresse d'une paire
- */
-async function getPairAddress(factoryAddress, tokenA, tokenB) {
-  try {
-    const factory = new web3.eth.Contract(
-      IUniswapV2Factory.abi,
-      factoryAddress
-    );
-    return await factory.methods.getPair(tokenA, tokenB).call();
-  } catch (err) {
-    console.error("Erreur getPairAddress:", err.message);
-    return null;
-  }
+const logDir = path.join(__dirname, "LOG");
+const csvPath = path.join(logDir, "price_differences.csv");
+
+if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
+if (!fs.existsSync(csvPath)) {
+  fs.writeFileSync(csvPath, "timestamp,quickswapPrice,sushiswapPrice,diff_sushi_over_quick,diff_quick_over_sushi,net_profit_usd_scenario1,net_profit_usd_scenario2\n", "utf8");
 }
 
-/**
- * Charge les adresses des paires Sushi et QuickSwap
- */
 async function loadPairAddresses() {
-  console.log("🔄 Chargement des paires...");
-  sushiPairAddress = await getPairAddress(SUSHISWAP_FACTORY, USDC, WMATIC);
-  quickswapPairAddress = await getPairAddress(QUICKSWAP_FACTORY, USDC, WMATIC);
+  log("Chargement des adresses des paires...");
+  sushiPairAddress = await getPairAddress(config.SUSHISWAP_FACTORY, USDC_ADDRESS, WMATIC_ADDRESS, web3);
+  quickswapPairAddress = await getPairAddress(config.QUICKSWAP_FACTORY, USDC_ADDRESS, WMATIC_ADDRESS, web3);
 
   if (!sushiPairAddress || !quickswapPairAddress) {
-    throw new Error("Erreur : une des paires n’a pas pu être chargée.");
+    throw new Error("Erreur : une des paires est invalide.");
   }
 
-  pairsToMonitor.push(
-    sushiPairAddress.toLowerCase(),
-    quickswapPairAddress.toLowerCase()
-  );
-  console.log("✅ SushiSwap Pair :", sushiPairAddress);
-  console.log("✅ QuickSwap Pair:", quickswapPairAddress);
+  pairsToMonitor.add(sushiPairAddress.toLowerCase());
+  pairsToMonitor.add(quickswapPairAddress.toLowerCase());
+
+  log("SushiSwap:", sushiPairAddress);
+  log("QuickSwap:", quickswapPairAddress);
 }
 
-/**
- * Vérifie les nouveaux blocs et détecte les swaps
- */
-async function checkNewBlocks() {
-  try {
-    const latest = Number(await web3.eth.getBlockNumber());
-
-    if (!lastBlockChecked) {
-      lastBlockChecked = latest;
-      console.log(`⛓️ Démarrage au bloc : ${latest}`);
-      return;
-    }
-
-    if (latest > lastBlockChecked) {
-      console.log(`🔍 Bloc ${latest} analysé...`);
-
-      const logs = await web3.eth.getPastLogs({
-        fromBlock: lastBlockChecked + 1,
-        toBlock: latest,
-        topics: [SWAP_EVENT_TOPIC],
-      });
-
-      let swapDetected = false;
-
-      for (const log of logs) {
-        if (pairsToMonitor.includes(log.address.toLowerCase())) {
-          console.log(`💱 Swap détecté sur : ${log.address}`);
-          swapDetected = true;
-        }
-      }
-
-      if (swapDetected) {
-        await checkArbitrageOpportunity(); // Appel ici uniquement quand swap détecté
-      }
-
-      lastBlockChecked = latest;
-    }
-  } catch (err) {
-    console.error("Erreur checkNewBlocks :", err.message);
-  }
-}
-
-/**
- * Récupère les réserves d’une paire
- */
-async function getReserves(pairAddr) {
-  const contract = new web3.eth.Contract(IUniswapV2Pair.abi, pairAddr);
-  return await contract.methods.getReserves().call();
-}
-
-// Cache du prix WMATIC
-let cachedWmaticPrice = null;
-let lastPriceUpdate = 0;
-
-/**
- * Récupère le prix USD de WMATIC (via CoinGecko)
- */
-async function getWmaticPriceInUSD() {
-  const now = Date.now();
-  const CACHE_DURATION = 60_000; // 1 min
-
-  if (cachedWmaticPrice && now - lastPriceUpdate < CACHE_DURATION) {
-    return cachedWmaticPrice;
-  }
-
-  try {
-    const res = await axios.get(
-      "https://api.coingecko.com/api/v3/simple/price",
-      {
-        params: { ids: "matic-network", vs_currencies: "usd" },
-      }
-    );
-    cachedWmaticPrice = res.data["matic-network"].usd;
-    lastPriceUpdate = now;
-    return cachedWmaticPrice;
-  } catch (err) {
-    console.error("Erreur CoinGecko :", err.message);
-    return cachedWmaticPrice || null;
-  }
-}
-
-/**
- * Calcule le prix d’un token en USD via les réserves de la paire
- */
-
-// async function getTokenPriceInUSD(pairAddress, tokenIsToken0 = true, tokenDecimals = 6) {
-//   const reserves = await getReserves(pairAddress);
-//   const reserve0 = BigInt(reserves.reserve0);
-//   const reserve1 = BigInt(reserves.reserve1);
-
-//   const reserveToken = tokenIsToken0 ? reserve0 : reserve1;
-//   const reserveWmatic = tokenIsToken0 ? reserve1 : reserve0;
-
-//   if (reserveToken === 0n || reserveWmatic === 0n) return null;
-
-//   const tokenAmount = Number(formatUnits(reserveToken.toString(), tokenDecimals));
-//   const wmaticAmount = Number(formatUnits(reserveWmatic.toString(), 18));
-
-//   if (wmaticAmount <= 0) return null;
-
-//   // Calcul du prix de 1 WMATIC en USD
-//   const pricePerWmaticInToken = tokenAmount / wmaticAmount;
-
-//   // Si le token est un stablecoin, on suppose que son prix = $1
-//   const pricePerWmaticInUSD = pricePerWmaticInToken;
-
-//   return pricePerWmaticInUSD;
-// }
-
-async function getSellPrice(
-  pairAddress,
-  tokenIsToken0 = true,
-  tokenDecimals = 6
-) {
-  const reserves = await getReserves(pairAddress);
-  const reserve0 = BigInt(reserves.reserve0);
-  const reserve1 = BigInt(reserves.reserve1);
-
-  const reserveToken = tokenIsToken0 ? reserve0 : reserve1;
-  const reserveWmatic = tokenIsToken0 ? reserve1 : reserve0;
-
-  if (reserveToken === 0n || reserveWmatic === 0n) return null;
-
-  const tokenAmount = Number(
-    formatUnits(reserveToken.toString(), tokenDecimals)
-  );
-  const wmaticAmount = Number(formatUnits(reserveWmatic.toString(), 18));
-
-  if (wmaticAmount <= 0) return null;
-
-  // Prix 1 WMATIC en Token (ex: USDC)
-  const priceWmaticInToken = tokenAmount / wmaticAmount;
-
-  // On suppose que Token est USDC (stablecoin)
-  const priceWmaticInUSD = priceWmaticInToken * 1; // USDC = $1
-
-  return priceWmaticInUSD;
-}
-
-async function getBuyPrice(
-  pairAddress,
-  tokenIsToken0 = true,
-  tokenDecimals = 6
-) {
-  const reserves = await getReserves(pairAddress);
-  const reserve0 = BigInt(reserves.reserve0);
-  const reserve1 = BigInt(reserves.reserve1);
-
-  const reserveToken = tokenIsToken0 ? reserve0 : reserve1;
-  const reserveWmatic = tokenIsToken0 ? reserve1 : reserve0;
-
-  if (reserveToken === 0n || reserveWmatic === 0n) return null;
-
-  const tokenAmount = Number(
-    formatUnits(reserveToken.toString(), tokenDecimals)
-  );
-  const wmaticAmount = Number(formatUnits(reserveWmatic.toString(), 18));
-
-  if (tokenAmount <= 0) return null;
-
-  // Prix d'achat de 1 Token (ex: USDC) en WMATIC
-  const buyPrice = wmaticAmount / tokenAmount;
-
-  return buyPrice;
-}
-
-/**
- * Vérifie les opportunités d’arbitrage
- */
 async function checkArbitrageOpportunity() {
-  // Paire SushiSwap (USDC/WMATIC)
-  const sushiSellPrice = await getSellPrice(sushiPairAddress, true, 6); // USDC = token0
-  const quickBuyPrice = await getSellPrice(quickswapPairAddress, true, 6); // USDC = token0
+  log("Vérification arbitrage...");
 
-  if (!sushiSellPrice || !quickBuyPrice) {
-    console.log("⛔ Prix non disponibles");
+  const quickswapReserves = await getReserves(quickswapPairAddress, web3);
+  const sushiReserves = await getReserves(sushiPairAddress, web3);
+
+  if (!quickswapReserves || !sushiReserves) {
+    log("Réserves manquantes.");
     return;
   }
 
-  console.log(
-    `💹 SushiSwap (Sell): $${sushiSellPrice.toFixed(
-      6
-    )} | QuickSwap (Buy): $${quickBuyPrice.toFixed(6)}`
+  const quickswapPriceUSDCPerWMATIC = calculatePrice(quickswapReserves, WMATIC_ADDRESS, USDC_ADDRESS, TOKEN_DECIMALS);
+  const sushiPriceUSDCPerWMATIC = calculatePrice(sushiReserves, WMATIC_ADDRESS, USDC_ADDRESS, TOKEN_DECIMALS);
+
+  if (!quickswapPriceUSDCPerWMATIC || !sushiPriceUSDCPerWMATIC) {
+    log("Erreur de calcul des prix.");
+    return;
+  }
+
+  log(`Prix QuickSwap: ${quickswapPriceUSDCPerWMATIC.toFixed(6)} USDC`);
+  log(`Prix SushiSwap: ${sushiPriceUSDCPerWMATIC.toFixed(6)} USDC`);
+
+  const initialUSDCForLoan = parseUnits("1000000", TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]);
+  const flashLoanCost = initialUSDCForLoan * BigInt(Math.round(AAVE_FLASH_LOAN_FEE * 1e6)) / 1_000_000n;
+
+  let wmaticReceivedFromQuickswap = getAmountOut(
+    initialUSDCForLoan,
+    quickswapReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1,
+    quickswapReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1
   );
+  let finalUSDCFromSushi = getAmountOut(
+    wmaticReceivedFromQuickswap,
+    sushiReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1,
+    sushiReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1
+  );
+  const netProfitUSDC_Scenario1 = finalUSDCFromSushi - initialUSDCForLoan - flashLoanCost;
+  const netProfitUSD_Scenario1 = Number(formatUnits(netProfitUSDC_Scenario1.toString(), TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]));
 
-  // Calcul de l'écart
-  const diff = Math.abs(sushiSellPrice - quickBuyPrice);
-  const diffPercent = (diff / Math.min(sushiSellPrice, quickBuyPrice)) * 100;
+  let wmaticReceivedFromSushi = getAmountOut(
+    initialUSDCForLoan,
+    sushiReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1,
+    sushiReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1
+  );
+  let finalUSDCFromQuickswap = getAmountOut(
+    wmaticReceivedFromSushi,
+    quickswapReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1,
+    quickswapReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1
+  );
+  const netProfitUSDC_Scenario2 = finalUSDCFromQuickswap - initialUSDCForLoan - flashLoanCost;
+  const netProfitUSD_Scenario2 = Number(formatUnits(netProfitUSDC_Scenario2.toString(), TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]));
 
-  console.log(`Diff: ${diffPercent.toFixed(2)}%`);
+  const now = new Date().toISOString();
+  const diffSushiOverQuick = ((sushiPriceUSDCPerWMATIC - quickswapPriceUSDCPerWMATIC) / quickswapPriceUSDCPerWMATIC) * 100;
+  const diffQuickOverSushi = ((quickswapPriceUSDCPerWMATIC - sushiPriceUSDCPerWMATIC) / sushiPriceUSDCPerWMATIC) * 100;
 
-  if (diffPercent > 1) {
-    console.log(
-      `🚨 Opportunité d’arbitrage : écart de ${diffPercent.toFixed(2)}%`
-    );
+  const csvRow = `${now},${quickswapPriceUSDCPerWMATIC.toFixed(6)},${sushiPriceUSDCPerWMATIC.toFixed(6)},${diffSushiOverQuick.toFixed(4)},${diffQuickOverSushi.toFixed(4)},${netProfitUSD_Scenario1.toFixed(4)},${netProfitUSD_Scenario2.toFixed(4)}\n`;
+  fs.appendFile(csvPath, csvRow, (err) => {
+    if (err) log("Erreur CSV:", err);
+  });
+
+  if (netProfitUSD_Scenario1 > PROFIT_THRESHOLD_USD) {
+    const msg = `OPPORTUNITÉ: QuickSwap → Sushi | Profit: ${netProfitUSD_Scenario1.toFixed(4)} USD`;
+    log(msg);
+    sendEmailNotification("Arbitrage (Scenario 1)", msg);
+  }
+
+  if (netProfitUSD_Scenario2 > PROFIT_THRESHOLD_USD) {
+    const msg = `OPPORTUNITÉ: Sushi → QuickSwap | Profit: ${netProfitUSD_Scenario2.toFixed(4)} USD`;
+    log(msg);
+    sendEmailNotification("Arbitrage (Scenario 2)", msg);
+  }
+
+  if (netProfitUSD_Scenario1 <= PROFIT_THRESHOLD_USD && netProfitUSD_Scenario2 <= PROFIT_THRESHOLD_USD) {
+    log(`Aucune opportunité > $${PROFIT_THRESHOLD_USD}`);
   }
 }
 
-/**
- * Démarre le bot
- */
 async function startBot() {
   await loadPairAddresses();
+  log("Bot lancé. Écoute des swaps...");
 
-  setInterval(async () => {
-    await checkNewBlocks();
-  }, 5000);
+  try {
+    subscription = await web3.eth.subscribe('logs', {
+      topics: [SWAP_EVENT_TOPIC],
+      address: Array.from(pairsToMonitor)
+    });
 
-  console.log("🚀 Bot lancé !");
+    subscription.on('data', async (logData) => {
+      log(`Swap détecté sur ${logData.address} (bloc ${logData.blockNumber})`);
+      await checkArbitrageOpportunity();
+    });
+
+    subscription.on('error', (error) => {
+      log("Erreur de souscription:", error);
+      setTimeout(() => {
+        if (!web3.currentProvider || !web3.currentProvider.connected) {
+          web3.setProvider(new Web3.providers.WebsocketProvider(process.env.RPC_URL));
+        }
+        startBot();
+      }, 5000);
+    });
+
+    web3.currentProvider.on('end', async (event) => {
+      log(`WebSocket terminé. Code: ${event.code}`);
+      if (subscription) {
+        subscription.unsubscribe((err) => {
+          if (err) log("Erreur unsubscribe:", err);
+        });
+        subscription = null;
+      }
+      setTimeout(() => {
+        web3.setProvider(new Web3.providers.WebsocketProvider(process.env.RPC_URL));
+        startBot();
+      }, 5000);
+    });
+
+    web3.currentProvider.on('error', (error) => {
+      log("Erreur WebSocket:", error);
+    });
+
+  } catch (err) {
+    log("Erreur de souscription:", err);
+    setTimeout(() => startBot(), 10000);
+  }
+}
+
+function stopBot() {
+  if (subscription) {
+    subscription.unsubscribe((error, success) => {
+      if (success) log('Unsubscribed des logs.');
+      else log('Erreur unsubscribe:', error);
+    });
+  }
+  if (web3.currentProvider && web3.currentProvider.connected) {
+    web3.currentProvider.disconnect();
+    log('WebSocket fermé.');
+  }
 }
 
 startBot();
+
+module.exports = {
+  web3,
+  startBot,
+  stopBot,
+  loadPairAddresses,
+  checkArbitrageOpportunity,
+  getAmountOut,
+  calculatePrice,
+  getQuickswapPairAddress: () => quickswapPairAddress,
+  getSushiPairAddress: () => sushiPairAddress,
+};
