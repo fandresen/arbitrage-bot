@@ -5,7 +5,7 @@ const path = require("path");
 const { Web3 } = require("web3");
 
 const config = require("./config");
-const { WMATIC_ADDRESS, USDC_ADDRESS, TOKEN_DECIMALS, PROFIT_THRESHOLD_USD, AAVE_FLASH_LOAN_FEE } = config;
+const { WMATIC_ADDRESS, USDC_ADDRESS, TOKEN_DECIMALS, PROFIT_THRESHOLD_USD, AAVE_FLASH_LOAN_FEE,MAX_LOAN_AMOUNT_USDC,LOAN_AMOUNT_INCREMENT_USDC,MIN_LOAN_AMOUNT_USDC } = config;
 
 const { getPairAddress, getReserves } = require("./utils/contracts");
 const { getAmountOut, calculatePrice } = require("./utils/calculations");
@@ -76,58 +76,93 @@ async function checkArbitrageOpportunity() {
   log(`Prix QuickSwap: ${quickswapPriceUSDCPerWMATIC.toFixed(6)} USDC`);
   log(`Prix SushiSwap: ${sushiPriceUSDCPerWMATIC.toFixed(6)} USDC`);
 
-  const initialUSDCForLoan = parseUnits("1000000", TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]);
-  const flashLoanCost = initialUSDCForLoan * BigInt(Math.round(AAVE_FLASH_LOAN_FEE * 1e6)) / 1_000_000n;
+  // --- Initialisation des variables pour les meilleurs profits et montants ---
+  let bestProfitUSD_Scenario1 = -Infinity;
+  let bestLoanAmount_Scenario1 = 0n; // Stocké en BigInt pour la précision
 
-  let wmaticReceivedFromQuickswap = getAmountOut(
-    initialUSDCForLoan,
-    quickswapReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1,
-    quickswapReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1
-  );
-  let finalUSDCFromSushi = getAmountOut(
-    wmaticReceivedFromQuickswap,
-    sushiReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1,
-    sushiReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1
-  );
-  const netProfitUSDC_Scenario1 = finalUSDCFromSushi - initialUSDCForLoan - flashLoanCost;
-  const netProfitUSD_Scenario1 = Number(formatUnits(netProfitUSDC_Scenario1.toString(), TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]));
+  let bestProfitUSD_Scenario2 = -Infinity;
+  let bestLoanAmount_Scenario2 = 0n; // Stocké en BigInt pour la précision
 
-  let wmaticReceivedFromSushi = getAmountOut(
-    initialUSDCForLoan,
-    sushiReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1,
-    sushiReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1
-  );
-  let finalUSDCFromQuickswap = getAmountOut(
-    wmaticReceivedFromSushi,
-    quickswapReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1,
-    quickswapReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1
-  );
-  const netProfitUSDC_Scenario2 = finalUSDCFromQuickswap - initialUSDCForLoan - flashLoanCost;
-  const netProfitUSD_Scenario2 = Number(formatUnits(netProfitUSDC_Scenario2.toString(), TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]));
+  // --- Scénario 1: QuickSwap (Achat) -> SushiSwap (Vente) ---
+  for (let loanAmountNum = MIN_LOAN_AMOUNT_USDC; loanAmountNum <= MAX_LOAN_AMOUNT_USDC; loanAmountNum += LOAN_AMOUNT_INCREMENT_USDC) {
+    const currentLoanAmountUSDC = parseUnits(loanAmountNum.toString(), TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]);
+    const flashLoanCost = currentLoanAmountUSDC * BigInt(Math.round(AAVE_FLASH_LOAN_FEE * 1e6)) / 1_000_000n;
+
+    // Calcul du WMATIC reçu de QuickSwap
+    const wmaticReceivedFromQuickswap = getAmountOut(
+      currentLoanAmountUSDC,
+      quickswapReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1,
+      quickswapReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1
+    );
+
+    // Calcul de l'USDC final de SushiSwap
+    const finalUSDCFromSushi = getAmountOut(
+      wmaticReceivedFromQuickswap,
+      sushiReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1,
+      sushiReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1
+    );
+
+    const netProfitUSDC_Current = finalUSDCFromSushi - currentLoanAmountUSDC - flashLoanCost;
+    const netProfitUSD_Current = Number(formatUnits(netProfitUSDC_Current.toString(), TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]));
+
+    if (netProfitUSD_Current > bestProfitUSD_Scenario1) {
+      bestProfitUSD_Scenario1 = netProfitUSD_Current;
+      bestLoanAmount_Scenario1 = currentLoanAmountUSDC;
+    }
+  }
+
+  // --- Scénario 2: SushiSwap (Achat) -> QuickSwap (Vente) ---
+  for (let loanAmountNum = MIN_LOAN_AMOUNT_USDC; loanAmountNum <= MAX_LOAN_AMOUNT_USDC; loanAmountNum += LOAN_AMOUNT_INCREMENT_USDC) {
+    const currentLoanAmountUSDC = parseUnits(loanAmountNum.toString(), TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]);
+    const flashLoanCost = currentLoanAmountUSDC * BigInt(Math.round(AAVE_FLASH_LOAN_FEE * 1e6)) / 1_000_000n;
+
+    // Calcul du WMATIC reçu de SushiSwap
+    const wmaticReceivedFromSushi = getAmountOut(
+      currentLoanAmountUSDC,
+      sushiReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1,
+      sushiReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? sushiReserves.reserve0 : sushiReserves.reserve1
+    );
+
+    // Calcul de l'USDC final de QuickSwap
+    const finalUSDCFromQuickswap = getAmountOut(
+      wmaticReceivedFromSushi,
+      quickswapReserves.token0Address.toLowerCase() === WMATIC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1,
+      quickswapReserves.token0Address.toLowerCase() === USDC_ADDRESS.toLowerCase() ? quickswapReserves.reserve0 : quickswapReserves.reserve1
+    );
+
+    const netProfitUSDC_Current = finalUSDCFromQuickswap - currentLoanAmountUSDC - flashLoanCost;
+    const netProfitUSD_Current = Number(formatUnits(netProfitUSDC_Current.toString(), TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]));
+
+    if (netProfitUSD_Current > bestProfitUSD_Scenario2) {
+      bestProfitUSD_Scenario2 = netProfitUSD_Current;
+      bestLoanAmount_Scenario2 = currentLoanAmountUSDC;
+    }
+  }
 
   const now = new Date().toISOString();
   const diffSushiOverQuick = ((sushiPriceUSDCPerWMATIC - quickswapPriceUSDCPerWMATIC) / quickswapPriceUSDCPerWMATIC) * 100;
   const diffQuickOverSushi = ((quickswapPriceUSDCPerWMATIC - sushiPriceUSDCPerWMATIC) / sushiPriceUSDCPerWMATIC) * 100;
 
-  const csvRow = `${now},${quickswapPriceUSDCPerWMATIC.toFixed(6)},${sushiPriceUSDCPerWMATIC.toFixed(6)},${diffSushiOverQuick.toFixed(4)},${diffQuickOverSushi.toFixed(4)},${netProfitUSD_Scenario1.toFixed(4)},${netProfitUSD_Scenario2.toFixed(4)}\n`;
+  // --- Préparation de la ligne CSV avec les montants optimaux ---
+  const bestLoanAmountUSD_Scenario1 = Number(formatUnits(bestLoanAmount_Scenario1.toString(), TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]));
+  const bestLoanAmountUSD_Scenario2 = Number(formatUnits(bestLoanAmount_Scenario2.toString(), TOKEN_DECIMALS[USDC_ADDRESS.toLowerCase()]));
+
+  const csvRow = `${now},${quickswapPriceUSDCPerWMATIC.toFixed(6)},${sushiPriceUSDCPerWMATIC.toFixed(6)},${diffSushiOverQuick.toFixed(4)},${diffQuickOverSushi.toFixed(4)},${bestProfitUSD_Scenario1.toFixed(4)},${bestLoanAmountUSD_Scenario1.toFixed(0)},${bestProfitUSD_Scenario2.toFixed(4)},${bestLoanAmountUSD_Scenario2.toFixed(0)}\n`;
   fs.appendFile(csvPath, csvRow, (err) => {
     if (err) log("Erreur CSV:", err);
   });
 
-  if (netProfitUSD_Scenario1 > PROFIT_THRESHOLD_USD) {
-    const msg = `OPPORTUNITÉ: QuickSwap → Sushi | Profit: ${netProfitUSD_Scenario1.toFixed(4)} USD`;
+  // --- Logique de notification mise à jour ---
+  if (bestProfitUSD_Scenario1 > PROFIT_THRESHOLD_USD && bestProfitUSD_Scenario1 >= bestProfitUSD_Scenario2) {
+    const msg = `OPPORTUNITÉ DÉTECTÉE: QuickSwap → Sushi | Profit Optimal: ${bestProfitUSD_Scenario1.toFixed(4)} USD | Montant du Prêt Optimal: ${bestLoanAmountUSD_Scenario1.toFixed(0)} USDC`;
     log(msg);
-    sendEmailNotification("Arbitrage (Scenario 1)", msg);
-  }
-
-  if (netProfitUSD_Scenario2 > PROFIT_THRESHOLD_USD) {
-    const msg = `OPPORTUNITÉ: Sushi → QuickSwap | Profit: ${netProfitUSD_Scenario2.toFixed(4)} USD`;
+    sendEmailNotification("Arbitrage (Scenario 1) - Optimal", msg);
+  } else if (bestProfitUSD_Scenario2 > PROFIT_THRESHOLD_USD && bestProfitUSD_Scenario2 > bestProfitUSD_Scenario1) {
+    const msg = `OPPORTUNITÉ DÉTECTÉE: Sushi → QuickSwap | Profit Optimal: ${bestProfitUSD_Scenario2.toFixed(4)} USD | Montant du Prêt Optimal: ${bestLoanAmountUSD_Scenario2.toFixed(0)} USDC`;
     log(msg);
-    sendEmailNotification("Arbitrage (Scenario 2)", msg);
-  }
-
-  if (netProfitUSD_Scenario1 <= PROFIT_THRESHOLD_USD && netProfitUSD_Scenario2 <= PROFIT_THRESHOLD_USD) {
-    log(`Aucune opportunité > $${PROFIT_THRESHOLD_USD}`);
+    sendEmailNotification("Arbitrage (Scenario 2) - Optimal", msg);
+  } else {
+    log(`Aucune opportunité rentable (profit > $${PROFIT_THRESHOLD_USD}) après optimisation.`);
   }
 }
 
