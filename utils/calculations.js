@@ -27,25 +27,11 @@ functionsToFix.forEach(funcName => {
     if (abiEntry) {
         if (abiEntry.stateMutability === "nonpayable") { // Ne modifie que si c'est 'nonpayable'
             abiEntry.stateMutability = "view";
-            console.log(`[DEBUG] Modified ABI: ${funcName} stateMutability changed to 'view'.`);
         }
     } else {
         console.warn(`[DEBUG] Could not find function ${funcName} in IQuoterV2ABI.`);
     }
 });
-
-// console.log("[DEBUG] ABI entry for quoteExactInputSingle before contract instantiation:");
-// const debugAbiEntry = IQuoterV2ABI.find(
-//     (entry) => entry.name === "quoteExactInputSingle" && entry.type === "function"
-// );
-// if (debugAbiEntry) {
-//     console.log(`[DEBUG]   Name: ${debugAbiEntry.name}`);
-//     console.log(`[DEBUG]   Type: ${debugAbiEntry.type}`);
-//     console.log(`[DEBUG]   StateMutability: ${debugAbiEntry.stateMutability}`);
-//     console.log(`[DEBUG]   Inputs (first param type): ${debugAbiEntry.inputs && debugAbiEntry.inputs[0] ? debugAbiEntry.inputs[0].type : 'N/A'}`);
-// } else {
-//     console.log("[DEBUG]   quoteExactInputSingle entry not found in ABI.");
-// }
 
 
 /**
@@ -62,13 +48,13 @@ function getAmountOutV2(amountIn, reserveIn, reserveOut, dexFee) {
   if (amountIn <= 0n) return 0n;
   if (reserveIn <= 0n || reserveOut <= 0n) return 0n;
 
-  const IN_FEE_NUMERATOR = BigInt(Math.round((1 - dexFee) * 1_000_000));
-  const IN_FEE_DENOMINATOR = 1_000_000n;
+  const IN_FEE_NUMERATOR = BigInt(Math.round((1 - dexFee) * 1_000));
+  const IN_FEE_DENOMINATOR = 1_000n;
 
   const amountInWithFee = (amountIn * IN_FEE_NUMERATOR) / IN_FEE_DENOMINATOR;
 
   const numerator = amountInWithFee * reserveOut;
-  const denominator = reserveIn * IN_FEE_DENOMINATOR + amountInWithFee;
+  const denominator = reserveIn + amountInWithFee;
   //const denominator = reserveIn + amountInWithFee;
 
   const amountOut = numerator / denominator;
@@ -112,14 +98,7 @@ function calculatePriceV2(
 
   if (oneUnitIn === 0n) return null;
 
-  console.log("V2 - reserveIn:", reserveIn.toString());
-  console.log("V2 - reserveOut:", reserveOut.toString());
-  console.log("V2 - tokenInDecimals:", tokenInDecimals);
-  console.log("V2 - tokenOutDecimals:", tokenOutDecimals);
-  console.log("V2 - amountOut (1 unit tokenIn):", amountOut.toString());
-
-
-  return Number(formatUnits(amountOut.toString(), tokenOutDecimals));
+  return Number(formatUnits(amountOut.toString(), tokenInDecimals)).toFixed(2);
 }
 
 /**
@@ -135,14 +114,9 @@ function calculatePriceV2(
  */
 async function getAmountOutV3(amountIn, pool, tokenIn, tokenOut, provider) {
     try {
-        // console.log(`[DEBUG] Tentative d'instancier QuoterV2 Contract avec l'adresse: ${PANCAKESWAP_V3_QUOTER_V2}`);
 
         // Créer une interface pour encoder/décoder les appels
         const quoterInterface = new ethers.Interface(IQuoterV2ABI);
-
-         
-        // console.log(`[DEBUG] Valeur de tokenIn.address: ${tokenIn ? tokenIn.address : 'TOKEN_IN_UNDEFINED_OR_NULL'}`);
-        // console.log(`[DEBUG] Valeur de tokenOut.address: ${tokenOut ? tokenOut.address : 'TOKEN_OUT_UNDEFINED_OR_NULL'}`);
 
         const params = {
             tokenIn: tokenIn.address,
@@ -192,23 +166,32 @@ function calculatePriceV3(pool) {
     const token0Symbol = pool.token0.symbol;
     const token1Symbol = pool.token1.symbol;
 
-
-    console.log("V3 - token0:", pool.token0.symbol, pool.token0.address);
-    console.log("V3 - token1:", pool.token1.symbol, pool.token1.address);
-    console.log("V3 - token0Price:", pool.token0Price.toSignificant(6));
-    console.log("V3 - token1Price:", pool.token1Price.toSignificant(6));
-    console.log("V3 - sqrtPriceX96:", pool.sqrtRatioX96.toString());
+    let priceValue;
 
     // On veut le prix de 1 WBNB en USDT
     if (pool.token0.symbol === 'WBNB' && pool.token1.symbol === 'USDT') {
-      return Number(pool.token0Price.toSignificant(6)); // WBNB → USDT
+      // Cas: token0 est WBNB (18 décimales), token1 est USDT (6 décimales)
+      // pool.token0Price est le prix de WBNB en USDT (token0 par token1).
+      // La valeur de `toSignificant` sera le prix correct multiplié par 10^(décimales_WBNB - décimales_USDT)
+      const rawPriceString = pool.token0Price.toSignificant(6);
+      const decimalDifference = pool.token0.decimals - pool.token1.decimals; // 18 - 6 = 12
+      priceValue = Number(rawPriceString) / (10 ** decimalDifference);
+      
     } else if (pool.token0.symbol === 'USDT' && pool.token1.symbol === 'WBNB') {
-      const invertedPrice = 1 / Number(pool.token1Price.toSignificant(6)); // WBNB → USDT
-      return invertedPrice;
+      // Cas: token0 est USDT (6 décimales), token1 est WBNB (18 décimales)
+      // pool.token1Price est le prix de WBNB en USDT (token1 par token0).
+      // La valeur de `toSignificant` sera le prix correct multiplié par 10^(décimales_WBNB - décimales_USDT)
+      const rawPriceString = pool.token1Price.toSignificant(6);
+      const decimalDifference = pool.token1.decimals - pool.token0.decimals; // 18 - 6 = 12
+      priceValue = Number(rawPriceString) / (10 ** decimalDifference);
+
     } else {
       console.warn("⚠️ Paire inattendue dans calculatePriceV3:", token0Symbol, token1Symbol);
       return null;
     }
+
+    return priceValue;
+
   } catch (err) {
     console.error(`❌ Erreur calculatePriceV3:`, err.message);
     return null;

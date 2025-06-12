@@ -52,12 +52,12 @@ const pairsToMonitor = new Set();
 
 // Instances de Token pour le SDK V3
 const WBNB_TOKEN = new Token(56, WBNB_ADDRESS, TOKEN_DECIMALS[WBNB_ADDRESS.toLowerCase()], 'WBNB', 'Wrapped BNB');
-console.log(`[DEBUG_INDEX] WBNB Token object:`, WBNB_TOKEN); 
-console.log(`[DEBUG_INDEX] WBNB Address:`, WBNB_TOKEN.address);
+// console.log(`[DEBUG_INDEX] WBNB Token object:`, WBNB_TOKEN); 
+// console.log(`[DEBUG_INDEX] WBNB Address:`, WBNB_TOKEN.address);
 
 const USDT_TOKEN = new Token(56, USDT_ADDRESS, TOKEN_DECIMALS[USDT_ADDRESS.toLowerCase()], 'USDT', 'Tether USD');
-console.log(`[DEBUG_INDEX] USDT Token object:`, USDT_TOKEN); 
-console.log(`[DEBUG_INDEX] USDT Address:`, USDT_TOKEN.address);
+// console.log(`[DEBUG_INDEX] USDT Token object:`, USDT_TOKEN); 
+// console.log(`[DEBUG_INDEX] USDT Address:`, USDT_TOKEN.address);
 
 // --- Configuration des Logs CSV ---
 const logDir = path.join(__dirname, "LOG");
@@ -209,7 +209,7 @@ async function checkArbitrageOpportunity() {
     return;
   }
 
-  log(`➡️ Prix PancakeSwap V2: ${pancakeswapV2PriceUSDTPerWBNB.toFixed(6)} USDT/BNB`);
+  log(`➡️ Prix PancakeSwap V2: ${pancakeswapV2PriceUSDTPerWBNB} USDT/BNB`);
   // Corrigez le message de log pour V3
   log(`➡️ Prix PancakeSwap V3: ${pancakeswapV3PriceUSDTPerWBNB.toFixed(6)} USDT/BNB (frais: ${v3FeeTierForCalc / 100}%)`);
 
@@ -303,7 +303,7 @@ async function checkArbitrageOpportunity() {
   const bestLoanAmountUSD_Scenario1 = Number(formatUnits(bestLoanAmount_Scenario1_USDT.toString(), usdtDecimals));
   const bestLoanAmountUSD_Scenario2 = Number(formatUnits(bestLoanAmount_Scenario2_USDT.toString(), usdtDecimals));
 
-  const csvRow = `${now},${pancakeswapV2PriceUSDTPerWBNB.toFixed(6)},${pancakeswapV3PriceUSDTPerWBNB.toFixed(6)},${diffV3OverV2.toFixed(4)},${diffV2OverV3.toFixed(4)},${bestProfitUSD_Scenario1.toFixed(4)},${bestLoanAmountUSD_Scenario1.toFixed(0)},${bestProfitUSD_Scenario2.toFixed(4)},${bestLoanAmountUSD_Scenario2.toFixed(0)}\n`;
+  const csvRow = `${now},${pancakeswapV2PriceUSDTPerWBNB},${pancakeswapV3PriceUSDTPerWBNB.toFixed(6)},${diffV3OverV2.toFixed(4)},${diffV2OverV3.toFixed(4)},${bestProfitUSD_Scenario1.toFixed(4)},${bestLoanAmountUSD_Scenario1.toFixed(0)},${bestProfitUSD_Scenario2.toFixed(4)},${bestLoanAmountUSD_Scenario2.toFixed(0)}\n`;
   fs.appendFile(csvPath, csvRow, (err) => {
     if (err) log("❌ Erreur lors de l'écriture CSV:", err);
   });
@@ -348,7 +348,7 @@ async function startBot() {
     });
 
     subscriptionV2.on('data', async (logData) => {
-      log(`🔄 Swap V2 détecté sur ${logData.address} (bloc ${logData.blockNumber})`);
+      // log(`🔄 Swap V2 détecté sur ${logData.address} (bloc ${logData.blockNumber})`);
       await checkArbitrageOpportunity();
     });
     subscriptionV2.on('error', (error) => {

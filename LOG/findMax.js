@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 // Chemin vers ton fichier CSV
-const filePath = path.join(__dirname, "price_differences.csv");
+const filePath = path.join(__dirname, "arbitrage_opportunities_v2_v3.csv");
 
 // Lecture du fichier
 fs.readFile(filePath, "utf8", (err, data) => {
@@ -14,24 +14,28 @@ fs.readFile(filePath, "utf8", (err, data) => {
     const lines = data.trim().split("\n");
     const headers = lines[0].split(",");
 
-    // Indices des colonnes
-    const diffSushiIndex = headers.indexOf("diff_sushi_over_quick");
-    const diffQuickIndex = headers.indexOf("diff_quick_over_sushi");
+    // Indices des colonnes utiles
+    const diffV3OverV2Index = headers.indexOf("diff_V3_over_V2");
+    const diffV2OverV3Index = headers.indexOf("diff_V2_over_V3");
 
-    let maxSushiOverQuick = -Infinity;
-    let maxQuickOverSushi = -Infinity;
+    let maxV3OverV2 = -Infinity;
+    let maxV2OverV3 = -Infinity;
 
     for (let i = 1; i < lines.length; i++) {
         const row = lines[i].split(",");
 
-        const diffSushi = parseFloat(row[diffSushiIndex]);
-        const diffQuick = parseFloat(row[diffQuickIndex]);
+        const diffV3OverV2 = parseFloat(row[diffV3OverV2Index]);
+        const diffV2OverV3 = parseFloat(row[diffV2OverV3Index]);
 
-        if (!isNaN(diffSushi)) maxSushiOverQuick = Math.max(maxSushiOverQuick, diffSushi);
-        if (!isNaN(diffQuick)) maxQuickOverSushi = Math.max(maxQuickOverSushi, diffQuick);
+        if (!isNaN(diffV3OverV2)) {
+            maxV3OverV2 = Math.max(maxV3OverV2, diffV3OverV2);
+        }
+
+        if (!isNaN(diffV2OverV3)) {
+            maxV2OverV3 = Math.max(maxV2OverV3, diffV2OverV3);
+        }
     }
 
-    console.log("💡 Max diff_sushi_over_quick:", maxSushiOverQuick.toFixed(4));
-    console.log("💡 Max diff_quick_over_sushi:", maxQuickOverSushi.toFixed(4));
+    console.log("💹 Max diff_V3_over_V2:", maxV3OverV2.toFixed(4));
+    console.log("💹 Max diff_V2_over_V3:", maxV2OverV3.toFixed(4));
 });
-

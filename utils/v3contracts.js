@@ -62,7 +62,7 @@ async function getV3PoolState(poolAddress, provider) {
             poolContract.slot0(),
             poolContract.liquidity()
         ]);
-        console.log("POOL V3 LIQUIDITY : ",liquidity)
+        // console.log("POOL V3 LIQUIDITY : ",liquidity)
         return {
             sqrtPriceX96: BigInt(slot0.sqrtPriceX96),
             tick: Number(slot0.tick),
