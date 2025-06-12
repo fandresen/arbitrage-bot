@@ -69,6 +69,7 @@ function getAmountOutV2(amountIn, reserveIn, reserveOut, dexFee) {
 
   const numerator = amountInWithFee * reserveOut;
   const denominator = reserveIn * IN_FEE_DENOMINATOR + amountInWithFee;
+  //const denominator = reserveIn + amountInWithFee;
 
   const amountOut = numerator / denominator;
   return amountOut;
@@ -92,8 +93,7 @@ function calculatePriceV2(
   tokenDecimalsMap,
   dexFee
 ) {
-  const token0IsTokenIn =
-    reserves.token0Address.toLowerCase() === tokenInAddress.toLowerCase();
+  const token0IsTokenIn = reserves.token0Address.toLowerCase() === tokenInAddress.toLowerCase();
   const reserveIn = token0IsTokenIn ? reserves.reserve0 : reserves.reserve1;
   const reserveOut = token0IsTokenIn ? reserves.reserve1 : reserves.reserve0;
 
@@ -111,6 +111,13 @@ function calculatePriceV2(
   const amountOut = getAmountOutV2(oneUnitIn, reserveIn, reserveOut, dexFee);
 
   if (oneUnitIn === 0n) return null;
+
+  console.log("V2 - reserveIn:", reserveIn.toString());
+  console.log("V2 - reserveOut:", reserveOut.toString());
+  console.log("V2 - tokenInDecimals:", tokenInDecimals);
+  console.log("V2 - tokenOutDecimals:", tokenOutDecimals);
+  console.log("V2 - amountOut (1 unit tokenIn):", amountOut.toString());
+
 
   return Number(formatUnits(amountOut.toString(), tokenOutDecimals));
 }
@@ -182,16 +189,32 @@ async function getAmountOutV3(amountIn, pool, tokenIn, tokenOut, provider) {
  */
 function calculatePriceV3(pool) {
   try {
-    // La propriété `token0Price` du pool donne le prix de 1 token0 en token1
-    // et `token1Price` donne le prix de 1 token1 en token0.
-    // Assurez-vous d'utiliser le bon pour votre paire.
-    const price = pool.token0Price.toSignificant(6); // exemple de prix de token0 en token1
-    return Number(price);
+    const token0Symbol = pool.token0.symbol;
+    const token1Symbol = pool.token1.symbol;
+
+
+    console.log("V3 - token0:", pool.token0.symbol, pool.token0.address);
+    console.log("V3 - token1:", pool.token1.symbol, pool.token1.address);
+    console.log("V3 - token0Price:", pool.token0Price.toSignificant(6));
+    console.log("V3 - token1Price:", pool.token1Price.toSignificant(6));
+    console.log("V3 - sqrtPriceX96:", pool.sqrtRatioX96.toString());
+
+    // On veut le prix de 1 WBNB en USDT
+    if (pool.token0.symbol === 'WBNB' && pool.token1.symbol === 'USDT') {
+      return Number(pool.token0Price.toSignificant(6)); // WBNB → USDT
+    } else if (pool.token0.symbol === 'USDT' && pool.token1.symbol === 'WBNB') {
+      const invertedPrice = 1 / Number(pool.token1Price.toSignificant(6)); // WBNB → USDT
+      return invertedPrice;
+    } else {
+      console.warn("⚠️ Paire inattendue dans calculatePriceV3:", token0Symbol, token1Symbol);
+      return null;
+    }
   } catch (err) {
     console.error(`❌ Erreur calculatePriceV3:`, err.message);
     return null;
   }
 }
+
 
 module.exports = {
   getAmountOutV2,
