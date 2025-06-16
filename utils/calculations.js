@@ -112,10 +112,30 @@ function calculatePriceV2(
  * @param {object} provider - Instance d'ethers.js Provider.
  * @returns {Promise<BigInt>} Le montant de tokenOut reçu.
  */
-async function getAmountOutV3(amountIn, pool, tokenIn, tokenOut, provider) {
-    try {
 
-        // Créer une interface pour encoder/décoder les appels
+// **New: Rate Limiter for getAmountOutV3**
+let lastQuoterCallTime = 0;
+const QUOTER_THROTTLE_INTERVAL_MS = 200; // Adjust as needed. e.g., 50ms for 20 calls/sec.
+
+async function getAmountOutV3(amountIn, pool, tokenIn, tokenOut, provider) {
+    // Implement rate limiting directly here for the quoter calls
+    const now = Date.now();
+    if (now - lastQuoterCallTime < QUOTER_THROTTLE_INTERVAL_MS) {
+        // If we hit the rate limit here, we should wait, not skip,
+        // because the arbitrage calculation depends on this result.
+        // A simple `await new Promise(resolve => setTimeout(resolve, ...))` can work,
+        // but a more sophisticated queue with exponential backoff is better for production.
+        // For now, let's just log and return 0n to indicate a skipped/failed call.
+        // In a real scenario, you'd want to queue this and retry.
+        console.warn(`⏩ Saut de l'appel Quoter V3: Trop de requêtes internes. Attendez ou augmentez les limites.`);
+        // For simplicity and to avoid blocking indefinitely, we return 0n.
+        // In a production system, you'd want to queue and retry, or use a robust rate-limiter library.
+        await new Promise(resolve => setTimeout(resolve, QUOTER_THROTTLE_INTERVAL_MS - (now - lastQuoterCallTime)));
+    }
+    lastQuoterCallTime = Date.now(); // Update after potential wait
+
+
+    try {
         const quoterInterface = new ethers.Interface(IQuoterV2ABI);
 
         const params = {
@@ -123,26 +143,19 @@ async function getAmountOutV3(amountIn, pool, tokenIn, tokenOut, provider) {
             tokenOut: tokenOut.address,
             fee: pool.fee,
             amountIn: amountIn,
-            sqrtPriceLimitX96: 0 // Pas de limite de prix pour une simple estimation
+            sqrtPriceLimitX96: 0 // No price limit for a simple estimate
         };
 
-        // Encoder les données de l'appel de fonction
         const encodedData = quoterInterface.encodeFunctionData("quoteExactInputSingle", [params]);
 
-        // Effectuer l'appel direct au provider
         const rawResult = await provider.call({
             to: PANCAKESWAP_V3_QUOTER_V2,
             data: encodedData
         });
 
-        // Décode le résultat de l'appel
-        // La fonction quoteExactInputSingle retourne un uint256 (BigNumber en ethers v5, BigInt en v6)
         const decodedResult = quoterInterface.decodeFunctionResult("quoteExactInputSingle", rawResult);
-
-        // Le résultat est un tableau, le premier élément est le montant
         const quotedAmountOut = decodedResult[0];
 
-        // Assurez-vous que c'est un BigInt (ethers v6 le fait par défaut pour uint256)
         return quotedAmountOut;
 
     } catch (err) {
@@ -151,7 +164,12 @@ async function getAmountOutV3(amountIn, pool, tokenIn, tokenOut, provider) {
         if (err.data) console.error(`[DEBUG] Error Data (revert reason encoded): ${err.data}`);
         if (err.reason) console.error(`[DEBUG] Error Reason (decoded): ${err.reason}`);
         console.error(`[DEBUG] Stack trace de l'erreur:`, err.stack);
-        return 0n;
+        // Potentially re-throw or handle specific Infura rate limit errors
+        if (err.code === 'BAD_DATA' && err.message.includes('Too Many Requests')) {
+            console.error('Infura rate limit hit during getAmountOutV3 call. Consider reducing LOAN_AMOUNT_INCREMENT_USDT or upgrading Infura plan.');
+            // Implement a more aggressive backoff here or flag to the main loop to slow down.
+        }
+        return 0n; // Return 0n on error to prevent breaking subsequent calculations
     }
 }
 

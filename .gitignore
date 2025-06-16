@@ -1,4 +1,4 @@
 node_modules/
 .env
-LOG/*.csv
+LOG/arbitrage_opportunities_v2_v3.csv
 *.log

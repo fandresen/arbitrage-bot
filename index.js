@@ -68,6 +68,10 @@ if (!fs.existsSync(csvPath)) {
   fs.writeFileSync(csvPath, "timestamp,pancakeV2Price,pancakeV3Price,diff_V3_over_V2,diff_V2_over_V3,net_profit_usd_V2_to_V3,loan_amount_usd_V2_to_V3,net_profit_usd_V3_to_V2,loan_amount_usd_V3_to_V2\n", "utf8");
 }
 
+// --- Rate Limiting variables ---
+let lastCallTime = 0;
+const THROTTLE_INTERVAL_MS = 1000; // 100ms = 10 requests per second (1000ms / 10 requests)
+
 // --- Fonctions Principales ---
 
 /**
@@ -169,6 +173,13 @@ async function loadPairAddresses() {
  * Vérifie les opportunités d'arbitrage entre PancakeSwap V2 et PancakeSwap V3 pour la paire BNB/USDT.
  */
 async function checkArbitrageOpportunity() {
+  const now = Date.now();
+  if (now - lastCallTime < THROTTLE_INTERVAL_MS) {
+    // log("⏩ Saut de la vérification d'arbitrage: Trop de requêtes.");
+    return; // Ne pas exécuter si l'intervalle n'est pas passé
+  }
+  lastCallTime = now;
+
   log("🔍 Vérification des opportunités d'arbitrage BNB/USDT entre PancakeSwap V2 et V3...");
 
   // --- Récupération des réserves/état pour V2 ---
@@ -296,14 +307,14 @@ async function checkArbitrageOpportunity() {
   }
 
   // --- Enregistrement des données et Notification ---
-  const now = new Date().toISOString();
+  const timestampForCsv = new Date().toISOString(); // Use a distinct variable name
   const diffV3OverV2 = ((pancakeswapV3PriceUSDTPerWBNB - pancakeswapV2PriceUSDTPerWBNB) / pancakeswapV2PriceUSDTPerWBNB) * 100;
   const diffV2OverV3 = ((pancakeswapV2PriceUSDTPerWBNB - pancakeswapV3PriceUSDTPerWBNB) / pancakeswapV3PriceUSDTPerWBNB) * 100;
 
   const bestLoanAmountUSD_Scenario1 = Number(formatUnits(bestLoanAmount_Scenario1_USDT.toString(), usdtDecimals));
   const bestLoanAmountUSD_Scenario2 = Number(formatUnits(bestLoanAmount_Scenario2_USDT.toString(), usdtDecimals));
 
-  const csvRow = `${now},${pancakeswapV2PriceUSDTPerWBNB},${pancakeswapV3PriceUSDTPerWBNB.toFixed(6)},${diffV3OverV2.toFixed(4)},${diffV2OverV3.toFixed(4)},${bestProfitUSD_Scenario1.toFixed(4)},${bestLoanAmountUSD_Scenario1.toFixed(0)},${bestProfitUSD_Scenario2.toFixed(4)},${bestLoanAmountUSD_Scenario2.toFixed(0)}\n`;
+  const csvRow = `${timestampForCsv},${pancakeswapV2PriceUSDTPerWBNB},${pancakeswapV3PriceUSDTPerWBNB.toFixed(6)},${diffV3OverV2.toFixed(4)},${diffV2OverV3.toFixed(4)},${bestProfitUSD_Scenario1.toFixed(4)},${bestLoanAmountUSD_Scenario1.toFixed(0)},${bestProfitUSD_Scenario2.toFixed(4)},${bestLoanAmountUSD_Scenario2.toFixed(0)}\n`;
   fs.appendFile(csvPath, csvRow, (err) => {
     if (err) log("❌ Erreur lors de l'écriture CSV:", err);
   });
