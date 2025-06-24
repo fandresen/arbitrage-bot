@@ -1,6 +1,4 @@
-// utils/contracts.js
-const IUniswapV2Factory = require("../abis/IUniswapV2Factory.json");
-const IUniswapV2Pair = require("../abis/IUniswapV2Pair.json");
+
 
 /**
  * Récupère l'adresse d'une paire à partir de la factory.

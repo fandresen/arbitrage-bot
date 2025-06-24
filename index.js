@@ -66,12 +66,12 @@ const csvPath = path.join(logDir, "arbitrage_opportunities_v3_uni_v3.csv"); // N
 if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
 if (!fs.existsSync(csvPath)) {
   // En-tête CSV mis à jour pour les scénarios V3-Uniswap V3
-  fs.writeFileSync(csvPath, "timestamp,pancakeV3Price,uniswap005Price,uniswap03Price,profit_Uni005_to_PancakeV3,profit_PancakeV3_to_Uni005,loan_amount_usd\n", "utf8");
+  fs.writeFileSync(csvPath, "timestamp,pancakeV3Price,uniswap005Price,uniswap03Price,profit_Uni005_to_PancakeV3,profit_PancakeV3_to_Uni005,different_Percent,loan_amount_usd\n", "utf8");
 }
 
 // --- Rate Limiting variables ---
 let lastCallTime = 0;
-const THROTTLE_INTERVAL_MS = 1000; // 100ms = 10 requests per second (1000ms / 10 requests)
+const THROTTLE_INTERVAL_MS = 500; // 100ms = 10 requests per second (1000ms / 10 requests)
 
 // --- Fonctions Principales ---
 
@@ -370,7 +370,8 @@ async function checkArbitrageOpportunity() {
 
   // --- Enregistrement des données et Notification ---
   const timestampForCsv = new Date().toISOString(); 
-  const csvRow = `${timestampForCsv},${pancakeswapV3PriceUSDTPerWBNB ? pancakeswapV3PriceUSDTPerWBNB.toFixed(6) : 'N/A'},${uniswap005PriceUSDTPerWBNB ? uniswap005PriceUSDTPerWBNB.toFixed(6) : 'N/A'},${uniswap03PriceUSDTPerWBNB ? uniswap03PriceUSDTPerWBNB.toFixed(6) : 'N/A'},${bestProfitUSD_Uni_to_PancakeV3.toFixed(4)},${bestProfitUSD_PancakeV3_to_Uni.toFixed(4)},${Number(formatUnits(bestLoanAmount_Uni_to_PancakeV3_USDT > bestLoanAmount_PancakeV3_to_Uni_USDT ? bestLoanAmount_Uni_to_PancakeV3_USDT : bestLoanAmount_PancakeV3_to_Uni_USDT, usdtDecimals)).toFixed(0)}\n`;
+  const differentPercent = Math.abs((100-((pancakeswapV3PriceUSDTPerWBNB.toFixed(2) *100)/uniswap005PriceUSDTPerWBNB.toFixed(2))).toFixed(3))
+  const csvRow = `${timestampForCsv},${pancakeswapV3PriceUSDTPerWBNB ? pancakeswapV3PriceUSDTPerWBNB.toFixed(2) : 'N/A'},${uniswap005PriceUSDTPerWBNB ? uniswap005PriceUSDTPerWBNB.toFixed(2) : 'N/A'},${uniswap03PriceUSDTPerWBNB ? uniswap03PriceUSDTPerWBNB.toFixed(2) : 'N/A'},${bestProfitUSD_Uni_to_PancakeV3.toFixed(2)},${bestProfitUSD_PancakeV3_to_Uni.toFixed(2)},${differentPercent},${Number(formatUnits(bestLoanAmount_Uni_to_PancakeV3_USDT > bestLoanAmount_PancakeV3_to_Uni_USDT ? bestLoanAmount_Uni_to_PancakeV3_USDT : bestLoanAmount_PancakeV3_to_Uni_USDT, usdtDecimals)).toFixed(0)}\n`;
   
   fs.appendFile(csvPath, csvRow, (err) => {
     if (err) log("❌ Erreur lors de l'écriture CSV:", err);

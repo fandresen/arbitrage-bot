@@ -11,26 +11,7 @@ const ISwapRouterABI =
   require("@uniswap/v3-periphery/artifacts/contracts/interfaces/ISwapRouter.sol/ISwapRouter.json").abi;
 
 // Define a minimal ABI for the specific function causing issues
-const QUOTER_V2_SINGLE_QUOTE_ABI = [
-  {
-    inputs: [
-      { internalType: "address", name: "tokenIn", type: "address" },
-      { internalType: "address", name: "tokenOut", type: "address" },
-      { internalType: "uint24", name: "fee", type: "uint24" },
-      { internalType: "uint256", name: "amountIn", type: "uint256" },
-      { internalType: "uint160", name: "sqrtPriceLimitX96", type: "uint160" },
-    ],
-    name: "quoteExactInputSingle",
-    outputs: [
-      { internalType: "uint256", name: "amountOut", type: "uint256" }, // 1er output
-      { internalType: "uint160", name: "sqrtPriceX96After", type: "uint160" }, // 2ème output (très probable)
-      { internalType: "uint32", name: "initializedTicksCrossed", type: "uint32" }, // 3ème output (très probable)
-      { internalType: "uint256", name: "gasEstimate", type: "uint256" } // 4ème output (très probable)
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-];
+const QUOTER_V2_SINGLE_QUOTE_ABI = require("../abis/pancakeSwapQuoter.json");
 
 
 /**
@@ -56,14 +37,17 @@ async function getAmountOutV3(tokenIn, tokenOut, fee, amountIn, provider, quoter
     // Pour quoteExactInputSingle, sqrtPriceLimitX96 peut être 0 pour pas de limite inférieure
     // ou Math.sqrt(MAX_UINT256) pour pas de limite supérieure, selon le sens du swap.
     // Utiliser 0 pour une limite minimale permet de trouver n'importe quel prix tant que la liquidité existe.
-    const quotedAmountOut = await quoterContract.quoteExactInputSingle(
-      tokenIn.address,
-      tokenOut.address,
-      fee,
-      amountIn,
-      0 // sqrtPriceLimitX96: 0 means no limit (or max/min depending on swap direction for a given pool)
+     const [amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate] = await quoterContract.quoteExactInputSingle.staticCall(
+      {
+        tokenIn: tokenIn.address,
+        tokenOut: tokenOut.address,
+        fee: fee,
+        amountIn: amountIn,
+        sqrtPriceLimitX96: 0 
+      }
     );
-    return BigInt(quotedAmountOut);
+
+    return amountOut;
   } catch (err) {
     if (err.code === 'CALL_EXCEPTION') {
       console.error(`❌ Erreur getAmountOutV3 (${quoterAddress}) pour ${formatUnits(amountIn, tokenIn.decimals)} ${tokenIn.symbol} (Frais: ${fee / 100}%): CALL_EXCEPTION - ${err.message}. Cela peut indiquer une liquidité insuffisante pour le montant demandé ou un slippage trop élevé.`);

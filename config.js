@@ -37,7 +37,7 @@ const UNISWAP_V3_FEE_TIERS = {
 
 
 // Frais Venus Protocol Flash Loan (0.09% = 0.0009)
-const VENUS_FLASH_LOAN_FEE = 0.0009;
+const VENUS_FLASH_LOAN_FEE = 0.0001;
 
 // Montants de prêt pour la simulation
 const MIN_LOAN_AMOUNT_USDT = 1000;
