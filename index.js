@@ -17,21 +17,18 @@ const {
   MAX_LOAN_AMOUNT_USDT,
   LOAN_AMOUNT_INCREMENT_USDT,
   MIN_LOAN_AMOUNT_USDT,
-  PANCAKESWAP_V2_FACTORY,
-  PANCAKESWAP_V2_ROUTER, // Nouveau
-  PANCAKESWAP_V2_FEE,
   PANCAKESWAP_V3_FACTORY,
-  PANCAKESWAP_V3_ROUTER, // Nouveau
   PANCAKESWAP_V3_FEE_TIERS,
-  EMAIL_CONFIG,
+  PANCAKESWAP_V3_QUOTER_V2, // Nouveau
+  UNISWAP_V3_FACTORY, // Nouveau
+  UNISWAP_V3_QUOTER_V2, // Nouveau
+  UNISWAP_V3_FEE_TIERS, // Nouveau
 } = config;
 
-// Import des utilitaires V2 existants
-const { getPairAddress, getReserves } = require("./utils/contracts");
 // Import des nouveaux utilitaires V3
 const { getV3PoolAddress, getV3PoolState, createV3Pool } = require("./utils/v3contracts");
-// Import des calculs mis à jour
-const { getAmountOutV2, calculatePriceV2, getAmountOutV3, calculatePriceV3 } = require("./utils/calculations");
+// Import des calculs mis à jour (seules les fonctions V3 restent)
+const { getAmountOutV3, calculatePriceV3 } = require("./utils/calculations");
 const { sendEmailNotification } = require("./utils/notifications");
 
 // --- Configuration du Logger ---
@@ -43,29 +40,33 @@ function log(...args) {
 // --- Variables Globales pour les Instances et Souscriptions ---
 let web3; // Déclaré avec let pour pouvoir être réassigné lors de la reconnexion
 let ethersProvider; // Déclaré avec let
-let subscriptionV2 = null; // Renommé pour clarté
 let subscriptionV3 = null; // Renommé pour clarté
+let subscriptionUniswapV3_005 = null; // Nouvelle souscription
+let subscriptionUniswapV3_03 = null; // Nouvelle souscription (si utilisée)
 
-let pancakeswapV2PairAddress = "";
 let pancakeswapV3PoolAddress = "";
+// Corrected: Initialize to null so it's fetched dynamically
+let uniswapUSDTBNB_005_PoolAddress = null; 
+let uniswapUSDTBNB_03_PoolAddress = null; // Already correctly initialized to null
+
 const pairsToMonitor = new Set();
 
 // Instances de Token pour le SDK V3
 const WBNB_TOKEN = new Token(56, WBNB_ADDRESS, TOKEN_DECIMALS[WBNB_ADDRESS.toLowerCase()], 'WBNB', 'Wrapped BNB');
-// console.log(`[DEBUG_INDEX] WBNB Token object:`, WBNB_TOKEN); 
-// console.log(`[DEBUG_INDEX] WBNB Address:`, WBNB_TOKEN.address);
-
 const USDT_TOKEN = new Token(56, USDT_ADDRESS, TOKEN_DECIMALS[USDT_ADDRESS.toLowerCase()], 'USDT', 'Tether USD');
-// console.log(`[DEBUG_INDEX] USDT Token object:`, USDT_TOKEN); 
-// console.log(`[DEBUG_INDEX] USDT Address:`, USDT_TOKEN.address);
+
+let pancakeswapV3Pool; // Pour stocker l'instance de pool V3
+let uniswapUSDTBNB_005_Pool; // Pour stocker l'instance de pool Uniswap V3 0.05%
+let uniswapUSDTBNB_03_Pool; // Pour stocker l'instance de pool Uniswap V3 0.3%
 
 // --- Configuration des Logs CSV ---
 const logDir = path.join(__dirname, "LOG");
-const csvPath = path.join(logDir, "arbitrage_opportunities_v2_v3.csv");
+const csvPath = path.join(logDir, "arbitrage_opportunities_v3_uni_v3.csv"); // Nouveau nom de fichier CSV
 
 if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
 if (!fs.existsSync(csvPath)) {
-  fs.writeFileSync(csvPath, "timestamp,pancakeV2Price,pancakeV3Price,diff_V3_over_V2,diff_V2_over_V3,net_profit_usd_V2_to_V3,loan_amount_usd_V2_to_V3,net_profit_usd_V3_to_V2,loan_amount_usd_V3_to_V2\n", "utf8");
+  // En-tête CSV mis à jour pour les scénarios V3-Uniswap V3
+  fs.writeFileSync(csvPath, "timestamp,pancakeV3Price,uniswap005Price,uniswap03Price,profit_Uni005_to_PancakeV3,profit_PancakeV3_to_Uni005,loan_amount_usd\n", "utf8");
 }
 
 // --- Rate Limiting variables ---
@@ -102,15 +103,6 @@ function initializeProvidersAndSubscriptions() {
   web3.currentProvider.on('end', (event) => {
     log(`🔴 WebSocket déconnecté. Code: ${event.code}, Raison: ${event.reason}. Tentative de reconnexion...`);
     // Annuler les souscriptions existantes pour éviter les fuites de mémoire
-    if (subscriptionV2) {
-      subscriptionV2.unsubscribe((error, success) => {
-        if (success) log('✅ Unsubscribed des logs V2.');
-        else console.error('❌ Erreur lors de l\'unsubscribe V2:', error);
-      }).catch(err => {
-        console.error("❌ Erreur lors de l'unsubscribe V2 (catch):", err);
-      });
-      subscriptionV2 = null;
-    }
     if (subscriptionV3) {
       subscriptionV3.unsubscribe((error, success) => {
         if (success) log('✅ Unsubscribed des logs V3.');
@@ -120,6 +112,24 @@ function initializeProvidersAndSubscriptions() {
       });
       subscriptionV3 = null;
     }
+    if (subscriptionUniswapV3_005) {
+      subscriptionUniswapV3_005.unsubscribe((error, success) => {
+        if (success) log('✅ Unsubscribed des logs Uniswap V3 (0.05%).');
+        else console.error('❌ Erreur lors de l\'unsubscribe Uniswap V3 (0.05%):', error);
+      }).catch(err => {
+        console.error("❌ Erreur lors de l'unsubscribe Uniswap V3 (0.05%) (catch):", err);
+      });
+      subscriptionUniswapV3_005 = null;
+    }
+    if (subscriptionUniswapV3_03) {
+        subscriptionUniswapV3_03.unsubscribe((error, success) => {
+          if (success) log('✅ Unsubscribed des logs Uniswap V3 (0.3%).');
+          else console.error('❌ Erreur lors de l\'unsubscribe Uniswap V3 (0.3%):', error);
+        }).catch(err => {
+          console.error("❌ Erreur lors de l'unsubscribe Uniswap V3 (0.3%) (catch):", err);
+        });
+        subscriptionUniswapV3_03 = null;
+      }
 
     // Réinitialiser le provider et redémarrer le bot après un délai
     setTimeout(() => {
@@ -137,19 +147,11 @@ function initializeProvidersAndSubscriptions() {
 }
 
 /**
- * Charge les adresses des paires BNB/USDT sur PancakeSwap V2 et V3.
- * @throws {Error} Si l'une des adresses de paire est invalide.
+ * Charge les adresses des pools BNB/USDT sur PancakeSwap V3 et Uniswap V3.
+ * @throws {Error} Si l'une des adresses de pool est invalide.
  */
 async function loadPairAddresses() {
-  log("Chargement des adresses des paires BNB/USDT...");
-
-  // PancakeSwap V2
-  pancakeswapV2PairAddress = await getPairAddress(PANCAKESWAP_V2_FACTORY, USDT_ADDRESS, WBNB_ADDRESS, web3);
-  if (!pancakeswapV2PairAddress) {
-    throw new Error("❌ Erreur : PancakeSwap V2 paire BNB/USDT introuvable ou invalide.");
-  }
-  pairsToMonitor.add(pancakeswapV2PairAddress.toLowerCase());
-  log(`✅ PancakeSwap V2 BNB/USDT Pair: ${pancakeswapV2PairAddress}`);
+  log("Chargement des adresses des pools BNB/USDT...");
 
   // PancakeSwap V3 (Utilisons le tier de frais LOW/0.05%)
   const v3FeeTierUsed = PANCAKESWAP_V3_FEE_TIERS.LOW; // Déclarez la variable ici
@@ -167,69 +169,134 @@ async function loadPairAddresses() {
   pairsToMonitor.add(pancakeswapV3PoolAddress.toLowerCase());
   // Utilisez la variable v3FeeTierUsed dans le message de succès
   log(`✅ PancakeSwap V3 BNB/USDT Pool (${v3FeeTierUsed / 100}%): ${pancakeswapV3PoolAddress}`);
+
+  // Initialisation Uniswap V3 - USDT/BNB 0.05%
+  // L'adresse a été fournie, mais nous la vérifions quand même via la factory
+  // Removed hardcoded address, let it be fetched dynamically
+  uniswapUSDTBNB_005_PoolAddress = await getV3PoolAddress(
+    UNISWAP_V3_FACTORY,
+    USDT_TOKEN,
+    WBNB_TOKEN,
+    UNISWAP_V3_FEE_TIERS.LOW, // 0.05%
+    ethersProvider
+  );
+  
+  if (uniswapUSDTBNB_005_PoolAddress) {
+    pairsToMonitor.add(uniswapUSDTBNB_005_PoolAddress.toLowerCase());
+    log(`✅ Uniswap V3 USDT/BNB 0.05% Pool Found: ${uniswapUSDTBNB_005_PoolAddress}`);
+  } else {
+    log(`❌ Uniswap V3 USDT/BNB 0.05% Pool introuvable. Vérifiez l'adresse ou la configuration.`);
+  }
+
+  // Si vous voulez aussi surveiller la pool 0.3% d'Uniswap V3
+  uniswapUSDTBNB_03_PoolAddress = await getV3PoolAddress(
+    UNISWAP_V3_FACTORY,
+    USDT_TOKEN,
+    WBNB_TOKEN,
+    UNISWAP_V3_FEE_TIERS.MEDIUM, // 0.3%
+    ethersProvider
+  );
+  if (uniswapUSDTBNB_03_PoolAddress) {
+    pairsToMonitor.add(uniswapUSDTBNB_03_PoolAddress.toLowerCase());
+    log(`✅ Uniswap V3 USDT/BNB 0.3% Pool Found: ${uniswapUSDTBNB_03_PoolAddress}`);
+  } else {
+    log(`❌ Uniswap V3 USDT/BNB 0.3% Pool introuvable.`);
+  }
 }
 
 /**
- * Vérifie les opportunités d'arbitrage entre PancakeSwap V2 et PancakeSwap V3 pour la paire BNB/USDT.
+ * Vérifie les opportunités d'arbitrage entre PancakeSwap V3 et Uniswap V3.
  */
 async function checkArbitrageOpportunity() {
   const now = Date.now();
   if (now - lastCallTime < THROTTLE_INTERVAL_MS) {
-    // log("⏩ Saut de la vérification d'arbitrage: Trop de requêtes.");
     return; // Ne pas exécuter si l'intervalle n'est pas passé
   }
   lastCallTime = now;
 
-  log("🔍 Vérification des opportunités d'arbitrage BNB/USDT entre PancakeSwap V2 et V3...");
+  log("🔍 Vérification des opportunités d'arbitrage...");
 
-  // --- Récupération des réserves/état pour V2 ---
-  const pancakeswapV2Reserves = await getReserves(pancakeswapV2PairAddress, web3);
-  if (!pancakeswapV2Reserves) {
-    log("⚠️ Réserves PancakeSwap V2 manquantes. Impossible de vérifier l'arbitrage.");
-    return;
-  }
-  const pancakeswapV2PriceUSDTPerWBNB = calculatePriceV2(
-    pancakeswapV2Reserves,
-    WBNB_ADDRESS,
-    USDT_ADDRESS,
-    TOKEN_DECIMALS,
-    PANCAKESWAP_V2_FEE
-  );
-
-  // --- Récupération de l'état pour V3 ---
+  // --- Récupération de l'état pour V3 PancakeSwap ---
   const pancakeswapV3PoolState = await getV3PoolState(pancakeswapV3PoolAddress, ethersProvider);
   if (!pancakeswapV3PoolState) {
     log("⚠️ État PancakeSwap V3 pool manquant. Impossible de vérifier l'arbitrage.");
     return;
   }
   // Créer une instance de Pool V3 pour les calculs du SDK (en utilisant le V3_FEE_TIERS.LOW)
-  const v3FeeTierForCalc = PANCAKESWAP_V3_FEE_TIERS.LOW;
-  const pancakeswapV3Pool = createV3Pool(
+  const pancakeswapV3FeeTierForCalc = PANCAKESWAP_V3_FEE_TIERS.LOW;
+  pancakeswapV3Pool = createV3Pool(
     WBNB_TOKEN,
     USDT_TOKEN,
-    v3FeeTierForCalc, // Assurez-vous que c'est le même tier que celui utilisé pour getV3PoolAddress
+    pancakeswapV3FeeTierForCalc, 
     pancakeswapV3PoolState.sqrtPriceX96,
     pancakeswapV3PoolState.tick,
     pancakeswapV3PoolState.liquidity
   );
   const pancakeswapV3PriceUSDTPerWBNB = calculatePriceV3(pancakeswapV3Pool);
 
+  // --- Récupération de l'état pour V3 Uniswap (0.05%) ---
+  let uniswap005PriceUSDTPerWBNB = null;
+  if (uniswapUSDTBNB_005_PoolAddress) {
+    const uniswap005PoolState = await getV3PoolState(uniswapUSDTBNB_005_PoolAddress, ethersProvider);
+    if (uniswap005PoolState) {
+      uniswapUSDTBNB_005_Pool = createV3Pool(
+        USDT_TOKEN,
+        WBNB_TOKEN,
+        UNISWAP_V3_FEE_TIERS.LOW,
+        uniswap005PoolState.sqrtPriceX96,
+        uniswap005PoolState.tick,
+        uniswap005PoolState.liquidity
+      );
+      if (uniswapUSDTBNB_005_Pool) { // Added defensive check
+        uniswap005PriceUSDTPerWBNB = calculatePriceV3(uniswapUSDTBNB_005_Pool);
+      } else {
+        log("⚠️ Erreur: uniswapUSDTBNB_005_Pool n'a pas pu être créé.");
+      }
+    } else {
+      log("⚠️ État Uniswap V3 (0.05%) pool manquant.");
+    }
+  }
 
-  if (!pancakeswapV2PriceUSDTPerWBNB || !pancakeswapV3PriceUSDTPerWBNB) {
-    log("❌ Erreur de calcul des prix. Impossible de vérifier l'arbitrage.");
+  // --- Récupération de l'état pour V3 Uniswap (0.3%) ---
+  let uniswap03PriceUSDTPerWBNB = null;
+  if (uniswapUSDTBNB_03_PoolAddress) {
+    const uniswap03PoolState = await getV3PoolState(uniswapUSDTBNB_03_PoolAddress, ethersProvider);
+    if (uniswap03PoolState) {
+      uniswapUSDTBNB_03_Pool = createV3Pool(
+        USDT_TOKEN,
+        WBNB_TOKEN,
+        UNISWAP_V3_FEE_TIERS.MEDIUM,
+        uniswap03PoolState.sqrtPriceX96,
+        uniswap03PoolState.tick,
+        uniswap03PoolState.liquidity
+      );
+      if (uniswapUSDTBNB_03_Pool) { // Added defensive check
+          uniswap03PriceUSDTPerWBNB = calculatePriceV3(uniswapUSDTBNB_03_Pool);
+      } else {
+          log("⚠️ Erreur: uniswapUSDTBNB_03_Pool n'a pas pu être créé.");
+      }
+    } else {
+      log("⚠️ État Uniswap V3 (0.3%) pool manquant.");
+    }
+  }
+
+
+  if (!pancakeswapV3PriceUSDTPerWBNB) {
+    log("❌ Erreur de calcul des prix (PancakeSwap V3). Impossible de vérifier l'arbitrage.");
     return;
   }
 
-  log(`➡️ Prix PancakeSwap V2: ${pancakeswapV2PriceUSDTPerWBNB} USDT/BNB`);
-  // Corrigez le message de log pour V3
-  log(`➡️ Prix PancakeSwap V3: ${pancakeswapV3PriceUSDTPerWBNB.toFixed(6)} USDT/BNB (frais: ${v3FeeTierForCalc / 100}%)`);
+  log(`➡️ Prix PancakeSwap V3: ${pancakeswapV3PriceUSDTPerWBNB.toFixed(6)} USDT/BNB (frais: ${pancakeswapV3FeeTierForCalc / 100}%)`);
+  if (uniswap005PriceUSDTPerWBNB) log(`➡️ Prix Uniswap V3 (0.05%): ${uniswap005PriceUSDTPerWBNB.toFixed(6)} USDT/BNB`);
+  if (uniswap03PriceUSDTPerWBNB) log(`➡️ Prix Uniswap V3 (0.3%): ${uniswap03PriceUSDTPerWBNB.toFixed(6)} USDT/BNB`);
+
 
   // --- Initialisation des variables pour les meilleurs profits et montants ---
-  let bestProfitUSD_Scenario1 = -Infinity; // Scenario 1: Acheter V2 -> Vendre V3
-  let bestLoanAmount_Scenario1_USDT = 0n;
+  let bestProfitUSD_Uni_to_PancakeV3 = -Infinity; // Acheter Uniswap V3 (0.05%) -> Vendre PancakeSwap V3
+  let bestLoanAmount_Uni_to_PancakeV3_USDT = 0n;
 
-  let bestProfitUSD_Scenario2 = -Infinity; // Scenario 2: Acheter V3 -> Vendre V2
-  let bestLoanAmount_Scenario2_USDT = 0n;
+  let bestProfitUSD_PancakeV3_to_Uni = -Infinity; // Acheter PancakeSwap V3 -> Vendre Uniswap V3 (0.05%)
+  let bestLoanAmount_PancakeV3_to_Uni_USDT = 0n;
 
   const usdtDecimals = TOKEN_DECIMALS[USDT_ADDRESS.toLowerCase()];
 
@@ -238,101 +305,97 @@ async function checkArbitrageOpportunity() {
     const currentLoanAmountUSDT = parseUnits(loanAmountNum.toString(), usdtDecimals);
     const flashLoanCost = (currentLoanAmountUSDT * BigInt(Math.round(VENUS_FLASH_LOAN_FEE * 1_000_000))) / 1_000_000n;
 
-    // --- SCÉNARIO 1: Acheter BNB sur PancakeSwap V2, Vendre sur PancakeSwap V3 ---
-    // Condition: V2 est moins cher que V3
-    if (pancakeswapV2PriceUSDTPerWBNB < pancakeswapV3PriceUSDTPerWBNB) {
-        // Simuler achat de BNB sur V2
-        const wbnbReceivedFromV2 = getAmountOutV2(
+    // --- SCÉNARIO: Acheter BNB sur Uniswap V3 (0.05%), Vendre sur PancakeSwap V3 ---
+    if (uniswap005PriceUSDTPerWBNB && pancakeswapV3PriceUSDTPerWBNB && uniswap005PriceUSDTPerWBNB < pancakeswapV3PriceUSDTPerWBNB) {
+        const bnbAmountOutUniswap = await getAmountOutV3(
+            USDT_TOKEN,
+            WBNB_TOKEN,
+            UNISWAP_V3_FEE_TIERS.LOW,
             currentLoanAmountUSDT,
-            pancakeswapV2Reserves.token0Address.toLowerCase() === USDT_ADDRESS.toLowerCase() ? pancakeswapV2Reserves.reserve0 : pancakeswapV2Reserves.reserve1,
-            pancakeswapV2Reserves.token0Address.toLowerCase() === WBNB_ADDRESS.toLowerCase() ? pancakeswapV2Reserves.reserve0 : pancakeswapV2Reserves.reserve1,
-            PANCAKESWAP_V2_FEE
+            ethersProvider,
+            UNISWAP_V3_QUOTER_V2 // Utilise le quoter Uniswap
         );
 
-    // console.log(`[DEBUG_CALL_SCENARIO1] Appel de getAmountOutV3 avec:`);
-    // console.log(`[DEBUG_CALL_SCENARIO1]   tokenIn.address (WBNB_TOKEN avant l'appel): ${WBNB_TOKEN ? WBNB_TOKEN.address : 'UNDEFINED_WBNB_TOKEN_PASSED'}`);
-    // console.log(`[DEBUG_CALL_SCENARIO1]   tokenOut.address (USDT_TOKEN avant l'appel): ${USDT_TOKEN ? USDT_TOKEN.address : 'UNDEFINED_USDT_TOKEN_PASSED'}`);
-  
-        // Simuler vente de BNB sur V3
-        const finalUSDTFromV3 = await getAmountOutV3(
-            wbnbReceivedFromV2,    // amountIn : On vend du WBNB (reçu de V2)
-            pancakeswapV3Pool,     // pool     : La pool V3
-            WBNB_TOKEN,            // tokenIn  : On vend du WBNB
-            USDT_TOKEN,            // tokenOut : On reçoit de l'USDT
-            ethersProvider         // provider : Le provider ethers.js
-        );
+        if (bnbAmountOutUniswap) {
+            const usdtAmountOutPancake = await getAmountOutV3(
+                WBNB_TOKEN,
+                USDT_TOKEN,
+                pancakeswapV3FeeTierForCalc,
+                bnbAmountOutUniswap,
+                ethersProvider,
+                PANCAKESWAP_V3_QUOTER_V2 // Utilise le quoter PancakeSwap
+            );
 
-        const netProfitUSDT_Current = finalUSDTFromV3 - currentLoanAmountUSDT - flashLoanCost;
-        const netProfitUSD_Current = Number(formatUnits(netProfitUSDT_Current.toString(), usdtDecimals));
-
-        if (netProfitUSD_Current > bestProfitUSD_Scenario1) {
-            bestProfitUSD_Scenario1 = netProfitUSD_Current;
-            bestLoanAmount_Scenario1_USDT = currentLoanAmountUSDT;
+            if (usdtAmountOutPancake) {
+                const profitUSD_Current = (parseFloat(formatUnits(usdtAmountOutPancake, usdtDecimals)) - parseFloat(formatUnits(currentLoanAmountUSDT, usdtDecimals))) * (1 - VENUS_FLASH_LOAN_FEE);
+                if (profitUSD_Current > bestProfitUSD_Uni_to_PancakeV3) {
+                    bestProfitUSD_Uni_to_PancakeV3 = profitUSD_Current;
+                    bestLoanAmount_Uni_to_PancakeV3_USDT = currentLoanAmountUSDT;
+                }
+            }
         }
     }
 
-    // --- SCÉNARIO 2: Acheter BNB sur PancakeSwap V3, Vendre sur PancakeSwap V2 ---
-    // Condition: V3 est moins cher que V2
-    if (pancakeswapV3PriceUSDTPerWBNB < pancakeswapV2PriceUSDTPerWBNB) {
-
-    // console.log(`[DEBUG_CALL_SCENARIO1] Appel de getAmountOutV3 avec:`);
-    // console.log(`[DEBUG_CALL_SCENARIO1]   tokenIn.address (WBNB_TOKEN avant l'appel): ${WBNB_TOKEN ? WBNB_TOKEN.address : 'UNDEFINED_WBNB_TOKEN_PASSED'}`);
-    // console.log(`[DEBUG_CALL_SCENARIO1]   tokenOut.address (USDT_TOKEN avant l'appel): ${USDT_TOKEN ? USDT_TOKEN.address : 'UNDEFINED_USDT_TOKEN_PASSED'}`);
-  
-        // Simuler achat de BNB sur V3
-        const wbnbReceivedFromV3 = await getAmountOutV3(
-            currentLoanAmountUSDT, // amountIn : On vend de l'USDT (montant du prêt)
-            pancakeswapV3Pool,     // pool     : La pool V3
-            USDT_TOKEN,            // tokenIn  : On vend de l'USDT
-            WBNB_TOKEN,            // tokenOut : On reçoit du WBNB
-            ethersProvider         // provider : Le provider ethers.js
+    // --- SCÉNARIO: Acheter BNB sur PancakeSwap V3, Vendre sur Uniswap V3 (0.05%) ---
+    if (uniswap005PriceUSDTPerWBNB && pancakeswapV3PriceUSDTPerWBNB && pancakeswapV3PriceUSDTPerWBNB < uniswap005PriceUSDTPerWBNB) {
+        const bnbAmountOutPancake = await getAmountOutV3(
+            USDT_TOKEN,
+            WBNB_TOKEN,
+            pancakeswapV3FeeTierForCalc,
+            currentLoanAmountUSDT,
+            ethersProvider,
+            PANCAKESWAP_V3_QUOTER_V2 // Utilise le quoter PancakeSwap
         );
 
-        // Simuler vente de BNB sur V2
-        const finalUSDTFromV2 = getAmountOutV2(
-            wbnbReceivedFromV3,
-            pancakeswapV2Reserves.token0Address.toLowerCase() === WBNB_ADDRESS.toLowerCase() ? pancakeswapV2Reserves.reserve0 : pancakeswapV2Reserves.reserve1,
-            pancakeswapV2Reserves.token0Address.toLowerCase() === USDT_ADDRESS.toLowerCase() ? pancakeswapV2Reserves.reserve0 : pancakeswapV2Reserves.reserve1,
-            PANCAKESWAP_V2_FEE
-        );
+        if (bnbAmountOutPancake) {
+            const usdtAmountOutUniswap = await getAmountOutV3(
+                WBNB_TOKEN,
+                USDT_TOKEN,
+                UNISWAP_V3_FEE_TIERS.LOW,
+                bnbAmountOutPancake,
+                ethersProvider,
+                UNISWAP_V3_QUOTER_V2 // Utilise le quoter Uniswap
+            );
 
-        const netProfitUSDT_Current = finalUSDTFromV2 - currentLoanAmountUSDT - flashLoanCost;
-        const netProfitUSD_Current = Number(formatUnits(netProfitUSDT_Current.toString(), usdtDecimals));
-
-        if (netProfitUSD_Current > bestProfitUSD_Scenario2) {
-            bestProfitUSD_Scenario2 = netProfitUSD_Current;
-            bestLoanAmount_Scenario2_USDT = currentLoanAmountUSDT;
+            if (usdtAmountOutUniswap) {
+                const profitUSD_Current = (parseFloat(formatUnits(usdtAmountOutUniswap, usdtDecimals)) - parseFloat(formatUnits(currentLoanAmountUSDT, usdtDecimals))) * (1 - VENUS_FLASH_LOAN_FEE);
+                if (profitUSD_Current > bestProfitUSD_PancakeV3_to_Uni) {
+                    bestProfitUSD_PancakeV3_to_Uni = profitUSD_Current;
+                    bestLoanAmount_PancakeV3_to_Uni_USDT = currentLoanAmountUSDT;
+                }
+            }
         }
     }
   }
 
   // --- Enregistrement des données et Notification ---
-  const timestampForCsv = new Date().toISOString(); // Use a distinct variable name
-  const diffV3OverV2 = ((pancakeswapV3PriceUSDTPerWBNB - pancakeswapV2PriceUSDTPerWBNB) / pancakeswapV2PriceUSDTPerWBNB) * 100;
-  const diffV2OverV3 = ((pancakeswapV2PriceUSDTPerWBNB - pancakeswapV3PriceUSDTPerWBNB) / pancakeswapV3PriceUSDTPerWBNB) * 100;
-
-  const bestLoanAmountUSD_Scenario1 = Number(formatUnits(bestLoanAmount_Scenario1_USDT.toString(), usdtDecimals));
-  const bestLoanAmountUSD_Scenario2 = Number(formatUnits(bestLoanAmount_Scenario2_USDT.toString(), usdtDecimals));
-
-  const csvRow = `${timestampForCsv},${pancakeswapV2PriceUSDTPerWBNB},${pancakeswapV3PriceUSDTPerWBNB.toFixed(6)},${diffV3OverV2.toFixed(4)},${diffV2OverV3.toFixed(4)},${bestProfitUSD_Scenario1.toFixed(4)},${bestLoanAmountUSD_Scenario1.toFixed(0)},${bestProfitUSD_Scenario2.toFixed(4)},${bestLoanAmountUSD_Scenario2.toFixed(0)}\n`;
+  const timestampForCsv = new Date().toISOString(); 
+  const csvRow = `${timestampForCsv},${pancakeswapV3PriceUSDTPerWBNB ? pancakeswapV3PriceUSDTPerWBNB.toFixed(6) : 'N/A'},${uniswap005PriceUSDTPerWBNB ? uniswap005PriceUSDTPerWBNB.toFixed(6) : 'N/A'},${uniswap03PriceUSDTPerWBNB ? uniswap03PriceUSDTPerWBNB.toFixed(6) : 'N/A'},${bestProfitUSD_Uni_to_PancakeV3.toFixed(4)},${bestProfitUSD_PancakeV3_to_Uni.toFixed(4)},${Number(formatUnits(bestLoanAmount_Uni_to_PancakeV3_USDT > bestLoanAmount_PancakeV3_to_Uni_USDT ? bestLoanAmount_Uni_to_PancakeV3_USDT : bestLoanAmount_PancakeV3_to_Uni_USDT, usdtDecimals)).toFixed(0)}\n`;
+  
   fs.appendFile(csvPath, csvRow, (err) => {
     if (err) log("❌ Erreur lors de l'écriture CSV:", err);
   });
 
   // Logique de notification
-  if (bestProfitUSD_Scenario1 > PROFIT_THRESHOLD_USD && bestProfitUSD_Scenario1 >= bestProfitUSD_Scenario2) {
-    const msg = `💰 OPPORTUNITÉ DÉTECTÉE: Acheter BNB sur PancakeSwap V2, Vendre sur PancakeSwap V3 | Profit Optimal: ${bestProfitUSD_Scenario1.toFixed(4)} USDT | Montant du Prêt Optimal: ${bestLoanAmountUSD_Scenario1.toFixed(0)} USDT`;
+  let opportunitiesFound = false;
+
+  if (bestProfitUSD_Uni_to_PancakeV3 > PROFIT_THRESHOLD_USD) {
+    const msg = `💰 OPPORTUNITÉ DÉTECTÉE: Acheter BNB sur Uniswap V3 (0.05%), Vendre sur PancakeSwap V3 | Profit Optimal: ${bestProfitUSD_Uni_to_PancakeV3.toFixed(4)} USDT | Montant du Prêt Optimal: ${Number(formatUnits(bestLoanAmount_Uni_to_PancakeV3_USDT.toString(), usdtDecimals)).toFixed(0)} USDT`;
     log(msg);
-    sendEmailNotification("Arbitrage (V2 to V3) - Optimal", msg);
-    // Ici, vous déclencheriez l'appel à votre smart contract d'arbitrage
-    // executeArbitrage(USDT_ADDRESS, WBNB_ADDRESS, 'V2_TO_V3', bestLoanAmount_Scenario1_USDT);
-  } else if (bestProfitUSD_Scenario2 > PROFIT_THRESHOLD_USD && bestProfitUSD_Scenario2 > bestProfitUSD_Scenario1) {
-    const msg = `💰 OPPORTUNITÉ DÉTECTÉE: Acheter BNB sur PancakeSwap V3, Vendre sur PancakeSwap V2 | Profit Optimal: ${bestProfitUSD_Scenario2.toFixed(4)} USDT | Montant du Prêt Optimal: ${bestLoanAmountUSD_Scenario2.toFixed(0)} USDT`;
+    sendEmailNotification("Arbitrage (Uniswap V3 to PancakeSwap V3) - Optimal", msg);
+    opportunitiesFound = true;
+    // executeArbitrage(USDT_ADDRESS, WBNB_ADDRESS, 'UNIV3_TO_PANCAKEV3', bestLoanAmount_Uni_to_PancakeV3_USDT);
+  }
+
+  if (bestProfitUSD_PancakeV3_to_Uni > PROFIT_THRESHOLD_USD) {
+    const msg = `💰 OPPORTUNITÉ DÉTECTEÉ: Acheter BNB sur PancakeSwap V3, Vendre sur Uniswap V3 (0.05%) | Profit Optimal: ${bestProfitUSD_PancakeV3_to_Uni.toFixed(4)} USDT | Montant du Prêt Optimal: ${Number(formatUnits(bestLoanAmount_PancakeV3_to_Uni_USDT.toString(), usdtDecimals)).toFixed(0)} USDT`;
     log(msg);
-    sendEmailNotification("Arbitrage (V3 to V2) - Optimal", msg);
-    // Ici, vous déclencheriez l'appel à votre smart contract d'arbitrage
-    // executeArbitrage(USDT_ADDRESS, WBNB_ADDRESS, 'V3_TO_V2', bestLoanAmount_Scenario2_USDT);
-  } else {
+    sendEmailNotification("Arbitrage (PancakeSwap V3 to Uniswap V3) - Optimal", msg);
+    opportunitiesFound = true;
+    // executeArbitrage(USDT_ADDRESS, WBNB_ADDRESS, 'PANCAKEV3_TO_UNIV3', bestLoanAmount_PancakeV3_to_Uni_USDT);
+  }
+
+  if (!opportunitiesFound) {
     log(`💤 Aucune opportunité d'arbitrage rentable (profit > $${PROFIT_THRESHOLD_USD}) après optimisation.`);
   }
 }
@@ -344,41 +407,59 @@ async function startBot() {
   initializeProvidersAndSubscriptions(); // Initialise les providers et la logique de reconnexion
 
   // Définir les topics d'événements ICI après l'initialisation de 'web3'
-  const SWAP_EVENT_TOPIC = web3.utils.sha3("Swap(address,uint256,uint256,uint256,uint256,address)"); // Pour V2
-  const V3_SWAP_EVENT_TOPIC = web3.utils.sha3("Swap(address,address,int256,int256,uint160,uint128,int24)"); // Pour V3
+  const SWAP_EVENT_TOPIC_V3 = web3.utils.sha3("Swap(address,address,int256,int256,uint160,uint128,int24)"); // Pour V3
 
 
   await loadPairAddresses();
-  log("🚀 Bot lancé. Écoute des swaps sur PancakeSwap V2 et V3...");
+  log("🚀 Bot lancé. Écoute des swaps sur les différents pools...");
 
   try {
-    // Souscription aux événements V2
-    subscriptionV2 = await web3.eth.subscribe('logs', {
-      topics: [SWAP_EVENT_TOPIC],
-      address: [pancakeswapV2PairAddress]
-    });
-
-    subscriptionV2.on('data', async (logData) => {
-      // log(`🔄 Swap V2 détecté sur ${logData.address} (bloc ${logData.blockNumber})`);
-      await checkArbitrageOpportunity();
-    });
-    subscriptionV2.on('error', (error) => {
-      log("❌ Erreur de souscription V2:", error);
-    });
-
-    // Souscription aux événements V3
+    // Souscription aux événements PancakeSwap V3
     subscriptionV3 = await web3.eth.subscribe('logs', {
-      topics: [V3_SWAP_EVENT_TOPIC],
+      topics: [SWAP_EVENT_TOPIC_V3],
       address: [pancakeswapV3PoolAddress]
     });
 
     subscriptionV3.on('data', async (logData) => {
-      log(`🔄 Swap V3 détecté sur ${logData.address} (bloc ${logData.blockNumber})`);
+      // log(`🔄 Swap V3 détecté sur ${logData.address} (bloc ${logData.blockNumber})`);
       await checkArbitrageOpportunity();
     });
     subscriptionV3.on('error', (error) => {
-      log("❌ Erreur de souscription V3:", error);
+      log("❌ Erreur de souscription PancakeSwap V3:", error);
     });
+
+    // Souscription aux événements Uniswap V3 (0.05%)
+    if (uniswapUSDTBNB_005_PoolAddress) {
+        subscriptionUniswapV3_005 = await web3.eth.subscribe('logs', {
+            topics: [SWAP_EVENT_TOPIC_V3], // Le topic est le même que PancakeSwap V3 car c'est un fork
+            address: [uniswapUSDTBNB_005_PoolAddress]
+        });
+
+        subscriptionUniswapV3_005.on('data', async (logData) => {
+            // log(`🔄 Swap Uniswap V3 (0.05%) détecté sur ${logData.address} (bloc ${logData.blockNumber})`);
+            await checkArbitrageOpportunity();
+        });
+        subscriptionUniswapV3_005.on('error', (error) => {
+            log("❌ Erreur de souscription Uniswap V3 (0.05%):", error);
+        });
+    }
+
+    // Souscription aux événements Uniswap V3 (0.3%) - Optionnel
+    if (uniswapUSDTBNB_03_PoolAddress) {
+        subscriptionUniswapV3_03 = await web3.eth.subscribe('logs', {
+            topics: [SWAP_EVENT_TOPIC_V3],
+            address: [uniswapUSDTBNB_03_PoolAddress]
+        });
+
+        subscriptionUniswapV3_03.on('data', async (logData) => {
+            // log(`🔄 Swap Uniswap V3 (0.3%) détecté sur ${logData.address} (bloc ${logData.blockNumber})`);
+            await checkArbitrageOpportunity();
+        });
+        subscriptionUniswapV3_03.on('error', (error) => {
+            log("❌ Erreur de souscription Uniswap V3 (0.3%):", error);
+        });
+    }
+
 
   } catch (err) {
     log("❌ Erreur fatale lors du démarrage du bot:", err);
@@ -390,17 +471,23 @@ async function startBot() {
  * Arrête la souscription WebSocket et ferme la connexion.
  */
 function stopBot() {
-  if (subscriptionV2) {
-    subscriptionV2.unsubscribe((error, success) => {
-      if (success) log('✅ Unsubscribed des logs V2.');
-      else console.error('❌ Erreur lors de l\'unsubscribe V2:', error);
-    }).catch(err => console.error("❌ Erreur lors de l'unsubscribe V2 (catch):", err));
-  }
   if (subscriptionV3) {
     subscriptionV3.unsubscribe((error, success) => {
       if (success) log('✅ Unsubscribed des logs V3.');
       else console.error('❌ Erreur lors de l\'unsubscribe V3:', error);
     }).catch(err => console.error("❌ Erreur lors de l'unsubscribe V3 (catch):", err));
+  }
+  if (subscriptionUniswapV3_005) {
+    subscriptionUniswapV3_005.unsubscribe((error, success) => {
+      if (success) log('✅ Unsubscribed des logs Uniswap V3 (0.05%).');
+      else console.error('❌ Erreur lors de l\'unsubscribe Uniswap V3 (0.05%) (catch):', err);
+    }).catch(err => console.error("❌ Erreur lors de l'unsubscribe Uniswap V3 (0.05%) (catch):", err));
+  }
+  if (subscriptionUniswapV3_03) {
+    subscriptionUniswapV3_03.unsubscribe((error, success) => {
+      if (success) log('✅ Unsubscribed des logs Uniswap V3 (0.3%).');
+      else console.error('❌ Erreur lors de l\'unsubscribe Uniswap V3 (0.3%) (catch):', err);
+    }).catch(err => console.error("❌ Erreur lors de l'unsubscribe Uniswap V3 (0.3%) (catch):", err));
   }
 
   if (web3 && web3.currentProvider && web3.currentProvider.connected) {
@@ -414,16 +501,14 @@ startBot();
 
 // --- Exports pour les tests (si nécessaire) ---
 module.exports = {
-  web3,
   ethersProvider,
   startBot,
   stopBot,
   loadPairAddresses,
   checkArbitrageOpportunity,
-  getAmountOutV2,
-  calculatePriceV2,
   getAmountOutV3,
   calculatePriceV3,
-  getPancakeSwapV2PairAddress: () => pancakeswapV2PairAddress,
   getPancakeSwapV3PoolAddress: () => pancakeswapV3PoolAddress,
+  getUniswapUSDTBNB_005_PoolAddress: () => uniswapUSDTBNB_005_PoolAddress,
+  getUniswapUSDTBNB_03_PoolAddress: () => uniswapUSDTBNB_03_PoolAddress,
 };
