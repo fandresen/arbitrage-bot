@@ -258,27 +258,27 @@ async function checkArbitrageOpportunity() {
   }
 
   // --- Récupération de l'état pour V3 Uniswap (0.3%) ---
-  let uniswap03PriceUSDTPerWBNB = null;
-  if (uniswapUSDTBNB_03_PoolAddress) {
-    const uniswap03PoolState = await getV3PoolState(uniswapUSDTBNB_03_PoolAddress, ethersProvider);
-    if (uniswap03PoolState) {
-      uniswapUSDTBNB_03_Pool = createV3Pool(
-        USDT_TOKEN,
-        WBNB_TOKEN,
-        UNISWAP_V3_FEE_TIERS.MEDIUM,
-        uniswap03PoolState.sqrtPriceX96,
-        uniswap03PoolState.tick,
-        uniswap03PoolState.liquidity
-      );
-      if (uniswapUSDTBNB_03_Pool) { // Added defensive check
-          uniswap03PriceUSDTPerWBNB = calculatePriceV3(uniswapUSDTBNB_03_Pool);
-      } else {
-          log("⚠️ Erreur: uniswapUSDTBNB_03_Pool n'a pas pu être créé.");
-      }
-    } else {
-      log("⚠️ État Uniswap V3 (0.3%) pool manquant.");
-    }
-  }
+  // let uniswap03PriceUSDTPerWBNB = null;
+  // if (uniswapUSDTBNB_03_PoolAddress) {
+  //   const uniswap03PoolState = await getV3PoolState(uniswapUSDTBNB_03_PoolAddress, ethersProvider);
+  //   if (uniswap03PoolState) {
+  //     uniswapUSDTBNB_03_Pool = createV3Pool(
+  //       USDT_TOKEN,
+  //       WBNB_TOKEN,
+  //       UNISWAP_V3_FEE_TIERS.MEDIUM,
+  //       uniswap03PoolState.sqrtPriceX96,
+  //       uniswap03PoolState.tick,
+  //       uniswap03PoolState.liquidity
+  //     );
+  //     if (uniswapUSDTBNB_03_Pool) { // Added defensive check
+  //         uniswap03PriceUSDTPerWBNB = calculatePriceV3(uniswapUSDTBNB_03_Pool);
+  //     } else {
+  //         log("⚠️ Erreur: uniswapUSDTBNB_03_Pool n'a pas pu être créé.");
+  //     }
+  //   } else {
+  //     log("⚠️ État Uniswap V3 (0.3%) pool manquant.");
+  //   }
+  // }
 
 
   if (!pancakeswapV3PriceUSDTPerWBNB) {
