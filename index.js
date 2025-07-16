@@ -61,12 +61,12 @@ let uniswapUSDTBNB_03_Pool; // Pour stocker l'instance de pool Uniswap V3 0.3%
 
 // --- Configuration des Logs CSV ---
 const logDir = path.join(__dirname, "LOG");
-const csvPath = path.join(logDir, "arbitrage_opportunities_v3_uni_v3.csv"); // Nouveau nom de fichier CSV
+const csvPath = path.join(logDir, "arbitrage_opportunities_v3_uni_v3.csv"); 
 
 if (!fs.existsSync(logDir)) fs.mkdirSync(logDir);
 if (!fs.existsSync(csvPath)) {
   // En-tête CSV mis à jour pour les scénarios V3-Uniswap V3
-  fs.writeFileSync(csvPath, "timestamp,pancakeV3Price,uniswap005Price,uniswap03Price,profit_Uni005_to_PancakeV3,profit_PancakeV3_to_Uni005,different_Percent,loan_amount_usd\n", "utf8");
+  fs.writeFileSync(csvPath, "timestamp,pancakeV3Price,uniswap005Price,profit_Uni005_to_PancakeV3,profit_PancakeV3_to_Uni005,different_Percent,loan_amount_usd\n", "utf8");
 }
 
 // --- Rate Limiting variables ---
@@ -188,20 +188,20 @@ async function loadPairAddresses() {
     log(`❌ Uniswap V3 USDT/BNB 0.05% Pool introuvable. Vérifiez l'adresse ou la configuration.`);
   }
 
-  // Si vous voulez aussi surveiller la pool 0.3% d'Uniswap V3
-  uniswapUSDTBNB_03_PoolAddress = await getV3PoolAddress(
-    UNISWAP_V3_FACTORY,
-    USDT_TOKEN,
-    WBNB_TOKEN,
-    UNISWAP_V3_FEE_TIERS.MEDIUM, // 0.3%
-    ethersProvider
-  );
-  if (uniswapUSDTBNB_03_PoolAddress) {
-    pairsToMonitor.add(uniswapUSDTBNB_03_PoolAddress.toLowerCase());
-    log(`✅ Uniswap V3 USDT/BNB 0.3% Pool Found: ${uniswapUSDTBNB_03_PoolAddress}`);
-  } else {
-    log(`❌ Uniswap V3 USDT/BNB 0.3% Pool introuvable.`);
-  }
+  // // Si vous voulez aussi surveiller la pool 0.3% d'Uniswap V3
+  // uniswapUSDTBNB_03_PoolAddress = await getV3PoolAddress(
+  //   UNISWAP_V3_FACTORY,
+  //   USDT_TOKEN,
+  //   WBNB_TOKEN,
+  //   UNISWAP_V3_FEE_TIERS.MEDIUM, // 0.3%
+  //   ethersProvider
+  // );
+  // if (uniswapUSDTBNB_03_PoolAddress) {
+  //   pairsToMonitor.add(uniswapUSDTBNB_03_PoolAddress.toLowerCase());
+  //   log(`✅ Uniswap V3 USDT/BNB 0.3% Pool Found: ${uniswapUSDTBNB_03_PoolAddress}`);
+  // } else {
+  //   log(`❌ Uniswap V3 USDT/BNB 0.3% Pool introuvable.`);
+  // }
 }
 
 /**
@@ -258,27 +258,27 @@ async function checkArbitrageOpportunity() {
   }
 
   // --- Récupération de l'état pour V3 Uniswap (0.3%) ---
-  let uniswap03PriceUSDTPerWBNB = null;
-  if (uniswapUSDTBNB_03_PoolAddress) {
-    const uniswap03PoolState = await getV3PoolState(uniswapUSDTBNB_03_PoolAddress, ethersProvider);
-    if (uniswap03PoolState) {
-      uniswapUSDTBNB_03_Pool = createV3Pool(
-        USDT_TOKEN,
-        WBNB_TOKEN,
-        UNISWAP_V3_FEE_TIERS.MEDIUM,
-        uniswap03PoolState.sqrtPriceX96,
-        uniswap03PoolState.tick,
-        uniswap03PoolState.liquidity
-      );
-      if (uniswapUSDTBNB_03_Pool) { // Added defensive check
-          uniswap03PriceUSDTPerWBNB = calculatePriceV3(uniswapUSDTBNB_03_Pool);
-      } else {
-          log("⚠️ Erreur: uniswapUSDTBNB_03_Pool n'a pas pu être créé.");
-      }
-    } else {
-      log("⚠️ État Uniswap V3 (0.3%) pool manquant.");
-    }
-  }
+  // let uniswap03PriceUSDTPerWBNB = null;
+  // if (uniswapUSDTBNB_03_PoolAddress) {
+  //   const uniswap03PoolState = await getV3PoolState(uniswapUSDTBNB_03_PoolAddress, ethersProvider);
+  //   if (uniswap03PoolState) {
+  //     uniswapUSDTBNB_03_Pool = createV3Pool(
+  //       USDT_TOKEN,
+  //       WBNB_TOKEN,
+  //       UNISWAP_V3_FEE_TIERS.MEDIUM,
+  //       uniswap03PoolState.sqrtPriceX96,
+  //       uniswap03PoolState.tick,
+  //       uniswap03PoolState.liquidity
+  //     );
+  //     if (uniswapUSDTBNB_03_Pool) { // Added defensive check
+  //         uniswap03PriceUSDTPerWBNB = calculatePriceV3(uniswapUSDTBNB_03_Pool);
+  //     } else {
+  //         log("⚠️ Erreur: uniswapUSDTBNB_03_Pool n'a pas pu être créé.");
+  //     }
+  //   } else {
+  //     log("⚠️ État Uniswap V3 (0.3%) pool manquant.");
+  //   }
+  // }
 
 
   if (!pancakeswapV3PriceUSDTPerWBNB) {
@@ -288,7 +288,6 @@ async function checkArbitrageOpportunity() {
 
   log(`➡️ Prix PancakeSwap V3: ${pancakeswapV3PriceUSDTPerWBNB.toFixed(6)} USDT/BNB (frais: ${pancakeswapV3FeeTierForCalc / 100}%)`);
   if (uniswap005PriceUSDTPerWBNB) log(`➡️ Prix Uniswap V3 (0.05%): ${uniswap005PriceUSDTPerWBNB.toFixed(6)} USDT/BNB`);
-  if (uniswap03PriceUSDTPerWBNB) log(`➡️ Prix Uniswap V3 (0.3%): ${uniswap03PriceUSDTPerWBNB.toFixed(6)} USDT/BNB`);
 
 
   // --- Initialisation des variables pour les meilleurs profits et montants ---
@@ -371,7 +370,7 @@ async function checkArbitrageOpportunity() {
   // --- Enregistrement des données et Notification ---
   const timestampForCsv = new Date().toISOString(); 
   const differentPercent = Math.abs((100-((pancakeswapV3PriceUSDTPerWBNB.toFixed(2) *100)/uniswap005PriceUSDTPerWBNB.toFixed(2))).toFixed(3))
-  const csvRow = `${timestampForCsv},${pancakeswapV3PriceUSDTPerWBNB ? pancakeswapV3PriceUSDTPerWBNB.toFixed(2) : 'N/A'},${uniswap005PriceUSDTPerWBNB ? uniswap005PriceUSDTPerWBNB.toFixed(2) : 'N/A'},${uniswap03PriceUSDTPerWBNB ? uniswap03PriceUSDTPerWBNB.toFixed(2) : 'N/A'},${bestProfitUSD_Uni_to_PancakeV3.toFixed(2)},${bestProfitUSD_PancakeV3_to_Uni.toFixed(2)},${differentPercent},${Number(formatUnits(bestLoanAmount_Uni_to_PancakeV3_USDT > bestLoanAmount_PancakeV3_to_Uni_USDT ? bestLoanAmount_Uni_to_PancakeV3_USDT : bestLoanAmount_PancakeV3_to_Uni_USDT, usdtDecimals)).toFixed(0)}\n`;
+  const csvRow = `${timestampForCsv},${pancakeswapV3PriceUSDTPerWBNB ? pancakeswapV3PriceUSDTPerWBNB.toFixed(2) : 'N/A'},${uniswap005PriceUSDTPerWBNB ? uniswap005PriceUSDTPerWBNB.toFixed(2) : 'N/A'},${bestProfitUSD_Uni_to_PancakeV3.toFixed(2)},${bestProfitUSD_PancakeV3_to_Uni.toFixed(2)},${differentPercent},${Number(formatUnits(bestLoanAmount_Uni_to_PancakeV3_USDT > bestLoanAmount_PancakeV3_to_Uni_USDT ? bestLoanAmount_Uni_to_PancakeV3_USDT : bestLoanAmount_PancakeV3_to_Uni_USDT, usdtDecimals)).toFixed(0)}\n`;
   
   fs.appendFile(csvPath, csvRow, (err) => {
     if (err) log("❌ Erreur lors de l'écriture CSV:", err);
@@ -404,68 +403,68 @@ async function checkArbitrageOpportunity() {
 /**
  * Démarre le bot en souscrivant aux événements de swap.
  */
+let rpcCallCount = 0; // Compteur global pour les appels RPC
+
+// Fonction pour simuler un appel RPC et incrémenter le compteur
+function simulateRpcCall(functionName) {
+    rpcCallCount++;
+    // log(`RPC Call: ${functionName} (Total: ${rpcCallCount})`); // Décommenter pour voir chaque appel
+}
+
 async function startBot() {
-  initializeProvidersAndSubscriptions(); // Initialise les providers et la logique de reconnexion
+    initializeProvidersAndSubscriptions(); // Initialise les providers et la logique de reconnexion
 
-  // Définir les topics d'événements ICI après l'initialisation de 'web3'
-  const SWAP_EVENT_TOPIC_V3 = web3.utils.sha3("Swap(address,address,int256,int256,uint160,uint128,int24)"); // Pour V3
+    // Définir les topics d'événements ICI après l'initialisation de 'web3'
+    const SWAP_EVENT_TOPIC_V3 = web3.utils.sha3("Swap(address,address,int256,int256,uint160,uint128,int24)"); // Pour V3
 
+    await loadPairAddresses();
+    log("🚀 Bot lancé. Écoute des swaps sur les différents pools...");
 
-  await loadPairAddresses();
-  log("🚀 Bot lancé. Écoute des swaps sur les différents pools...");
-
-  try {
-    // Souscription aux événements PancakeSwap V3
-    subscriptionV3 = await web3.eth.subscribe('logs', {
-      topics: [SWAP_EVENT_TOPIC_V3],
-      address: [pancakeswapV3PoolAddress]
-    });
-
-    subscriptionV3.on('data', async (logData) => {
-      // log(`🔄 Swap V3 détecté sur ${logData.address} (bloc ${logData.blockNumber})`);
-      await checkArbitrageOpportunity();
-    });
-    subscriptionV3.on('error', (error) => {
-      log("❌ Erreur de souscription PancakeSwap V3:", error);
-    });
-
-    // Souscription aux événements Uniswap V3 (0.05%)
-    if (uniswapUSDTBNB_005_PoolAddress) {
-        subscriptionUniswapV3_005 = await web3.eth.subscribe('logs', {
-            topics: [SWAP_EVENT_TOPIC_V3], // Le topic est le même que PancakeSwap V3 car c'est un fork
-            address: [uniswapUSDTBNB_005_PoolAddress]
-        });
-
-        subscriptionUniswapV3_005.on('data', async (logData) => {
-            // log(`🔄 Swap Uniswap V3 (0.05%) détecté sur ${logData.address} (bloc ${logData.blockNumber})`);
-            await checkArbitrageOpportunity();
-        });
-        subscriptionUniswapV3_005.on('error', (error) => {
-            log("❌ Erreur de souscription Uniswap V3 (0.05%):", error);
-        });
-    }
-
-    // Souscription aux événements Uniswap V3 (0.3%) - Optionnel
-    if (uniswapUSDTBNB_03_PoolAddress) {
-        subscriptionUniswapV3_03 = await web3.eth.subscribe('logs', {
+    try {
+        // Souscription aux événements PancakeSwap V3
+        // Cet appel 'web3.eth.subscribe' est un appel RPC
+        simulateRpcCall("web3.eth.subscribe (PancakeSwap V3)");
+        subscriptionV3 = await web3.eth.subscribe('logs', {
             topics: [SWAP_EVENT_TOPIC_V3],
-            address: [uniswapUSDTBNB_03_PoolAddress]
+            address: [pancakeswapV3PoolAddress]
         });
 
-        subscriptionUniswapV3_03.on('data', async (logData) => {
-            // log(`🔄 Swap Uniswap V3 (0.3%) détecté sur ${logData.address} (bloc ${logData.blockNumber})`);
+        subscriptionV3.on('data', async (logData) => {
+            // Chaque appel à checkArbitrageOpportunity pourrait contenir des appels RPC
+            // Nous allons donc incrémenter le compteur ici également,
+            // ou bien à l'intérieur de checkArbitrageOpportunity si vous voulez plus de granularité.
+            simulateRpcCall("checkArbitrageOpportunity (PancakeSwap V3 data)");
             await checkArbitrageOpportunity();
+            log(`Nombre total d'appels RPC: ${rpcCallCount}`); // Afficher le compteur après chaque traitement de données
         });
-        subscriptionUniswapV3_03.on('error', (error) => {
-            log("❌ Erreur de souscription Uniswap V3 (0.3%):", error);
+        subscriptionV3.on('error', (error) => {
+            log("❌ Erreur de souscription PancakeSwap V3:", error);
         });
+
+        // Souscription aux événements Uniswap V3 (0.05%)
+        if (uniswapUSDTBNB_005_PoolAddress) {
+            // Cet appel 'web3.eth.subscribe' est un appel RPC
+            simulateRpcCall("web3.eth.subscribe (Uniswap V3 0.05%)");
+            subscriptionUniswapV3_005 = await web3.eth.subscribe('logs', {
+                topics: [SWAP_EVENT_TOPIC_V3], // Le topic est le même que PancakeSwap V3 car c'est un fork
+                address: [uniswapUSDTBNB_005_PoolAddress]
+            });
+
+            subscriptionUniswapV3_005.on('data', async (logData) => {
+                // Chaque appel à checkArbitrageOpportunity pourrait contenir des appels RPC
+                simulateRpcCall("checkArbitrageOpportunity (Uniswap V3 0.05% data)");
+                await checkArbitrageOpportunity();
+                log(`Nombre total d'appels RPC: ${rpcCallCount}`); // Afficher le compteur après chaque traitement de données
+            });
+            subscriptionUniswapV3_005.on('error', (error) => {
+                log("❌ Erreur de souscription Uniswap V3 (0.05%):", error);
+            });
+        }
+
+    } catch (err) {
+        log("❌ Erreur fatale lors du démarrage du bot:", err);
+        setTimeout(() => startBot(), 10000);
     }
-
-
-  } catch (err) {
-    log("❌ Erreur fatale lors du démarrage du bot:", err);
-    setTimeout(() => startBot(), 10000);
-  }
 }
 
 /**
