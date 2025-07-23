@@ -9,7 +9,7 @@ const TOKEN_DECIMALS = {
 };
 
 //Adress du contrat déployé
-const FLASH_LOAN_CONTRACT_ADDRESS = "0xB048Bbc1Ee8b733FFfCFb979CdF7375d18e25997";
+const FLASH_LOAN_CONTRACT_ADDRESS = "0xC839604Fc24e315ECcac262F77310D2c69d4E54E";
 
 const PANCAKESWAP_V3_QUOTER_V2 = "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997";
 
@@ -39,7 +39,7 @@ const UNISWAP_V3_FEE_TIERS = {
 };
 
 
-// Frais Venus Protocol Flash Loan (0.09% = 0.0009)
+// Frais flashloan = 0.01%
 const VENUS_FLASH_LOAN_FEE = 0.0001;
 
 // Montants de prêt pour la simulation
@@ -51,7 +51,7 @@ const LOAN_AMOUNT_INCREMENT_USDT = 100000;
 const PROFIT_THRESHOLD_USD = 5;
 
 
-const SLIPPAGE_TOLERANCE = 0.005; // 0.5% de tolérance au slippage
+// const SLIPPAGE_TOLERANCE = 0.005; // 0.5% de tolérance au slippage
 
 // Configuration pour l'envoi d'e-mails (pour Nodemailer)
 const EMAIL_CONFIG = {
@@ -85,6 +85,6 @@ module.exports = {
   LOAN_AMOUNT_INCREMENT_USDT,
 
   PANCAKESWAP_V3_QUOTER_V2,
-  SLIPPAGE_TOLERANCE,
+  // SLIPPAGE_TOLERANCE,
   FLASH_LOAN_CONTRACT_ADDRESS
 };

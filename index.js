@@ -23,7 +23,6 @@ const {
   UNISWAP_V3_FACTORY,
   UNISWAP_V3_QUOTER_V2,
   UNISWAP_V3_FEE_TIERS,
-  SLIPPAGE_TOLERANCE,
   FLASH_LOAN_CONTRACT_ADDRESS,
 } = config;
 
@@ -244,9 +243,9 @@ async function checkArbitrageOpportunity() {
     log(msg);
     sendEmailNotification(`Arbitrage Triggered (${bestOpp.path})`, msg);
 
-    const slippageFactor = BigInt(Math.floor((1 - SLIPPAGE_TOLERANCE) * 10000));
-    const amountOutMinWBNB = (bestOpp.bnbOut * slippageFactor) / 10000n;
-    const amountOutMinUSDT = (bestOpp.finalUSDTOut * slippageFactor) / 10000n;
+    // Accepter tout les amount Out
+    const amountOutMinWBNB = 0n;
+    const amountOutMinUSDT = 0n;
 
     const isUniFirst = bestOpp.path.startsWith("Uni");
     const swap1Params = { tokenIn: USDT_ADDRESS, tokenOut: WBNB_ADDRESS, fee: isUniFirst ? UNISWAP_V3_FEE_TIERS.LOW : PANCAKESWAP_V3_FEE_TIERS.LOW, exchange: isUniFirst ? DEX.UNISWAP : DEX.PANCAKESWAP, amountOutMin: amountOutMinWBNB };
