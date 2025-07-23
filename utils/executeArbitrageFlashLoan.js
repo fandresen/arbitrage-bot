@@ -1,19 +1,6 @@
 // executeArbitrageFlashLoan.js
 const axios = require("axios");
 
-/**
- * Construit, signe et envoie une transaction d'arbitrage privée via l'API bloXroute.
- *
- * @param {ethers.Contract} contract - L'instance du contrat.
- * @param {object} dependencies - Les fonctions et utilitaires nécessaires.
- * @param {function} dependencies.log - La fonction de logging.
- * @param {function} dependencies.sendEmailNotification - La fonction pour notifier par email.
- * @param {function} dependencies.parseUnits - L'utilitaire ethers.parseUnits.
- * @param {BigInt} loanAmountToken0 - Le montant de token0 à emprunter.
- * @param {BigInt} loanAmountToken1 - Le montant de token1 à emprunter.
- * @param {object} swap1Params - Les paramètres du premier swap.
- * @param {object} swap2Params - Les paramètres du second swap.
- */
 async function executeFlashLoanArbitrage(
   contract,
   { log, sendEmailNotification, parseUnits },
@@ -22,37 +9,25 @@ async function executeFlashLoanArbitrage(
   swap1Params,
   swap2Params
 ) {
-  log("⚡ Preparing PRIVATE Flash Loan execution via bloXroute...");
+  log("⚡ Preparing PRIVATE Flash Loan execution via 48 Club...");
 
-  // Assurez-vous que votre clé d'autorisation bloXroute est définie dans vos variables d'environnement
-  if (!process.env.BLOXROUTE_AUTH_HEADER) {
-    log("❌ Error: BLOXROUTE_AUTH_HEADER environment variable not set.");
-    sendEmailNotification(
-      "Private Arbitrage FAILED",
-      "The private transaction failed because the BLOXROUTE_AUTH_HEADER is missing."
-    );
-    return;
-  }
+  // SUPPRIMÉ : Le check pour l'en-tête d'autorisation de bloXroute n'est plus nécessaire.
 
   try {
     const signer = contract.runner;
     const address = await signer.getAddress();
+    
+    // CORRIGÉ : Le nonce doit être exact. N'ajoutez pas +2, cela bloquerait vos transactions.
     const nonce = await signer.provider.getTransactionCount(address);
     const chainId = (await signer.provider.getNetwork()).chainId;
-    const gasPrice = parseUnits("15", "gwei"); // Un prix du gaz compétitif
+    
+    // NOTE : Ce gasPrice est compétitif, vous pouvez le garder.
+    const gasPrice = parseUnits("3", "gwei"); 
 
-    // Estimation du gaz
-    // const gasEstimate = await contract.executeArbitrage.estimateGas(
-    //   loanAmountToken0,
-    //   loanAmountToken1,
-    //   swap1Params,
-    //   swap2Params
-    // );
-    // log(`⛽ Estimated Gas: ${gasEstimate.toString()}`);
+    // ATTENTION : 40,000 est beaucoup trop bas. J'ai remis une valeur sûre de 750,000.
+    const gasLimit = BigInt(750000); 
+    log(`⛽ Using manual gas limit: ${gasLimit.toString()}`);
 
-    const gasLimit = BigInt(750000);
-
-    // Construction de l'objet de la transaction
     const tx = {
       to: await contract.getAddress(),
       data: contract.interface.encodeFunctionData("executeArbitrage", [
@@ -62,60 +37,53 @@ async function executeFlashLoanArbitrage(
         swap2Params,
       ]),
       gasPrice,
-      gasLimit: gasLimit, // Ajout d'une marge de sécurité
+      gasLimit: gasLimit,
       nonce,
       chainId,
       value: 0,
-      type: 0, // Transaction Legacy
+      type: 0, 
     };
 
-    // Signature de la transaction
     const signedTx = await signer.signTransaction(tx);
     
-    // La documentation de bloXroute spécifie "Raw transactions bytes without 0x prefix"
-    const transactionWithoutPrefix = signedTx.substring(2);
+    // SUPPRIMÉ : On ne retire plus le "0x". La méthode eth_sendRawTransaction en a besoin.
+    console.log("SIGNED TRANSACTION: ", signedTx);
 
-    // Envoi de la transaction signée via une requête POST à bloXroute
-    log(`🔒 Sending raw private transaction to bloXroute...`);
+    // CHANGÉ : Envoi de la transaction à l'endpoint de 48 Club avec le format standard.
+    log(`🔒 Sending raw private transaction to 48 Club...`);
     const { data } = await axios.post(
-      "https://api.blxrbdn.com/", // Endpoint de l'API bloXroute
+      "https://rpc.48.club", // NOUVELLE URL
       {
         jsonrpc: "2.0",
-        method: "bsc_private_tx", // Méthode pour la BSC
-        params: {
-          transaction: transactionWithoutPrefix, // Transaction signée sans le préfixe "0x"
-        },
-        id: "1",
+        method: "eth_sendRawTransaction", // NOUVELLE MÉTHODE
+        params: [signedTx], // NOUVEAU FORMAT DE PARAMÈTRES (un tableau avec la tx signée)
+        id: 1,
       },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": process.env.BLOXROUTE_AUTH_HEADER, // Votre clé d'autorisation
-        },
-      }
+      // SUPPRIMÉ : L'en-tête d'autorisation n'est plus nécessaire.
     );
 
     if (data.error) {
-      throw new Error(`bloXroute Error: ${data.error.message}`);
+      throw new Error(`48 Club API Error: ${data.error.message}`);
     }
 
-    const txHash = data.result.txHash;
-    log(`✅ PRIVATE Transaction sent via bloXroute. Hash: ${txHash}`);
+    // CORRIGÉ : La réponse standard renvoie le hash directement dans "result".
+    const txHash = data.result;
+    log(`✅ PRIVATE Transaction sent via 48 Club. Hash: ${txHash}`);
 
     sendEmailNotification(
-      "Private TX Sent via bloXroute",
+      "Private TX Sent via 48 Club",
       `Arbitrage transaction successfully sent. Hash: ${txHash}`
     );
 
   } catch (error) {
     const errorMessage = error?.response?.data?.error?.message || error.message;
-    log("❌ Error sending private transaction to bloXroute:", errorMessage);
+    log("❌ Error sending private transaction to 48 Club:", errorMessage);
     sendEmailNotification(
       "Private Arbitrage FAILED",
-      `The private transaction via bloXroute failed. Reason: ${errorMessage}`
+      `The private transaction via 48 Club failed. Reason: ${errorMessage}`
     );
   } finally {
-    log("⏹️ End of bloXroute execution attempt.");
+    log("⏹️ End of 48 Club execution attempt.");
   }
 }
 
