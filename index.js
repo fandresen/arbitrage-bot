@@ -32,6 +32,7 @@ const { getAmountOutV3, calculatePriceV3 } = require("./utils/calculations");
 const { sendEmailNotification } = require("./utils/notifications");
 const FlashLoanABI = require("./abis/FlashLoan.json").abi;
 const { executeFlashLoanArbitrage } = require("./utils/executeArbitrageFlashLoan");
+const timer = require("./utils/timer");
 
 // --- Configuration et Variables Globales ---
 let signer;
@@ -238,6 +239,7 @@ async function checkArbitrageOpportunity() {
   });
   
   if (bestOpp.profit > PROFIT_THRESHOLD_USD) {
+    timer.start();
     const loanAmountStr = formatUnits(bestOpp.loanAmountUSDT, usdtDecimals);
     const msg = `💰 EXECUTION: ${bestOpp.path} | Profit: ${bestOpp.profit.toFixed(4)} USD | Loan: ${loanAmountStr} USD`;
     log(msg);
@@ -253,7 +255,7 @@ async function checkArbitrageOpportunity() {
 
     await executeFlashLoanArbitrage(
         flashLoanContract,
-        { log, sendEmailNotification, parseUnits }, 
+        { log, sendEmailNotification, parseUnits,timer }, 
         bestOpp.loanAmountUSDT,
         0n, // loanAmountToken1 (WBNB)
         swap1Params,
