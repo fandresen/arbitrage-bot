@@ -3,7 +3,7 @@ const axios = require("axios");
 
 async function executeFlashLoanArbitrage(
   contract,
-  { log, sendEmailNotification, parseUnits },
+  { log, sendEmailNotification, parseUnits, timer },
   loanAmountToken0,
   loanAmountToken1,
   swap1Params,
@@ -43,6 +43,14 @@ async function executeFlashLoanArbitrage(
 
     console.log("SIGNED TRANSACTION: ", signedTx);
 
+    //Arrêter le chronomètre
+    const elapsedTimeInSeconds = timer.stop();
+    log(
+      `⏱️ Time from detection to submission: ${elapsedTimeInSeconds.toFixed(
+        3
+      )} seconds.`
+    );
+
     log(`🔒 Sending raw private transaction to 48 Club...`);
     const { data } = await axios.post("https://rpc.48.club", {
       jsonrpc: "2.0",
@@ -56,12 +64,14 @@ async function executeFlashLoanArbitrage(
     }
 
     const txHash = data.result;
-    log(`✅ PRIVATE Transaction sent via 48 Club. Hash: ${txHash}`);
+    const emailBody = `Arbitrage transaction successfully sent.
 
-    sendEmailNotification(
-      "Private TX Sent via 48 Club",
-      `Arbitrage transaction successfully sent. Hash: ${txHash}`
-    );
+  Hash: ${txHash} 
+  Time from detection to submission: ${elapsedTimeInSeconds.toFixed(
+    3
+  )} seconds.`;
+
+    sendEmailNotification("Private TX Sent via 48 Club", emailBody);
   } catch (error) {
     const errorMessage = error?.response?.data?.error?.message || error.message;
     log("❌ Error sending private transaction to 48 Club:", errorMessage);
