@@ -48,7 +48,7 @@ const MAX_LOAN_AMOUNT_USDT = 500000;
 const LOAN_AMOUNT_INCREMENT_USDT = 100000;
 
 // Seuil de profit net minimum en USD pour déclencher l'alerte
-const PROFIT_THRESHOLD_USD = 5;
+const PROFIT_THRESHOLD_USD = 20;
 
 
 // const SLIPPAGE_TOLERANCE = 0.005; // 0.5% de tolérance au slippage

@@ -25,7 +25,7 @@ async function executeFlashLoanArbitrage(
     const gasPrice = parseUnits("3", "gwei"); 
 
     // ATTENTION : 40,000 est beaucoup trop bas. J'ai remis une valeur sûre de 750,000.
-    const gasLimit = BigInt(750000); 
+    const gasLimit = BigInt(250000); 
     log(`⛽ Using manual gas limit: ${gasLimit.toString()}`);
 
     const tx = {

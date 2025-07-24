@@ -82,7 +82,7 @@ if (!fs.existsSync(csvPath)) {
 }
 
 let lastCallTime = 0;
-const THROTTLE_INTERVAL_MS = 250;
+const THROTTLE_INTERVAL_MS = 100;
 
 /**
  * Nettoie toutes les souscriptions WebSocket actives.
