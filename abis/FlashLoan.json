@@ -89,7 +89,7 @@
       "name": "UNISWAP_V3_ROUTER",
       "outputs": [
         {
-          "internalType": "contract ISwapRouter",
+          "internalType": "contract IV3SwapRouter",
           "name": "",
           "type": "address"
         }
@@ -206,19 +206,6 @@
       "type": "function"
     },
     {
-      "inputs": [],
-      "name": "pool",
-      "outputs": [
-        {
-          "internalType": "contract IUniswapV3Pool",
-          "name": "",
-          "type": "address"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
           "internalType": "uint256",
@@ -236,9 +223,22 @@
           "type": "bytes"
         }
       ],
-      "name": "uniswapV3FlashCallback",
+      "name": "pancakeV3FlashCallback",
       "outputs": [],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "pool",
+      "outputs": [
+        {
+          "internalType": "contract IUniswapV3Pool",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
