@@ -84,6 +84,12 @@ if (!fs.existsSync(csvPath)) {
 let lastCallTime = 0;
 const THROTTLE_INTERVAL_MS = 250;
 
+// --- NOUVEAU : Configuration du Watchdog ---
+let watchdogInterval = null;
+let lastActivityTime = Date.now(); // Initialise au démarrage
+const WATCHDOG_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const WATCHDOG_CHECK_INTERVAL_MS = 30 * 1000; // Vérifie toutes les 30 secondes
+
 /**
  * Nettoie toutes les souscriptions WebSocket actives.
  */
@@ -127,10 +133,9 @@ function initializeProvidersAndSubscriptions() {
 
   web3.currentProvider.on("end", (event) => {
     log(`🔴 WebSocket disconnected. Code: ${event.code}, Reason: ${event.reason}. Attempting to reconnect...`);
-    cleanupSubscriptions();
+    stopBot(); // Utilise stopBot pour un nettoyage complet
     setTimeout(() => {
       log("Re-initializing providers and restarting bot...");
-      initializeProvidersAndSubscriptions();
       startBot();
     }, 5000);
   });
@@ -166,6 +171,9 @@ async function loadPoolsAndInitialStates() {
  * Gestionnaire d'événements qui décode les logs et met à jour l'état en mémoire.
  */
 async function handleSwapEvent(eventLog) {
+  // --- NOUVEAU : Met à jour le timestamp de la dernière activité ---
+  lastActivityTime = Date.now();
+
   const poolAddress = eventLog.address.toLowerCase();
   try {
     const decodedData = web3.eth.abi.decodeLog(SWAP_EVENT_ABI, eventLog.data, eventLog.topics.slice(1));
@@ -243,7 +251,6 @@ async function checkArbitrageOpportunity() {
     log(msg);
     sendEmailNotification(`Arbitrage Triggered (${bestOpp.path})`, msg);
 
-    // Accepter tout les amount Out
     const amountOutMinWBNB = 0n;
     const amountOutMinUSDT = 0n;
 
@@ -255,13 +262,41 @@ async function checkArbitrageOpportunity() {
         flashLoanContract,
         { log, sendEmailNotification, parseUnits }, 
         bestOpp.loanAmountUSDT,
-        0n, // loanAmountToken1 (WBNB)
+        0n,
         swap1Params,
         swap2Params
     );
   } else {
      log(`💤 No profitable opportunity found. Best path profit: ${bestOpp.profit.toFixed(4)} USD.`);
   }
+}
+
+/**
+ * --- NOUVEAU : Démarre le watchdog pour surveiller l'activité. ---
+ */
+function startWatchdog() {
+  log("🐶 Watchdog activé. Vérification de l'activité toutes les 30 secondes...");
+  // S'assurer qu'il n'y a pas d'intervalle précédent qui tourne
+  if (watchdogInterval) clearInterval(watchdogInterval);
+
+  watchdogInterval = setInterval(() => {
+    const now = Date.now();
+    const timeSinceLastActivity = now - lastActivityTime;
+
+    if (timeSinceLastActivity > WATCHDOG_TIMEOUT_MS) {
+      log(`🔴 Inactivité détectée depuis plus de 5 minutes. Redémarrage du bot...`);
+      // Arrêter le watchdog actuel pour éviter des redémarrages multiples
+      clearInterval(watchdogInterval);
+      watchdogInterval = null; 
+
+      // Procédure de redémarrage
+      stopBot(); // Nettoie les connexions
+      setTimeout(() => {
+        log("🔄 Tentative de redémarrage du bot après inactivité.");
+        startBot(); // Relance le bot
+      }, 2000); // Petit délai pour s'assurer que tout est bien fermé
+    }
+  }, WATCHDOG_CHECK_INTERVAL_MS);
 }
 
 /**
@@ -274,12 +309,8 @@ async function startBot() {
     const SWAP_EVENT_TOPIC_V3 = web3.utils.sha3("Swap(address,address,int256,int256,uint160,uint128,int24)");
     log("🚀 Bot started. Listening for swaps...");
 
-    // === CORRECTION APPLIQUÉE ICI ===
-    // On vérifie que la souscription est bien créée avant de lui attacher des listeners.
-
     if (pancakeswapV3PoolAddress) {
       subscriptionPancakeV3 = await web3.eth.subscribe("logs", { topics: [SWAP_EVENT_TOPIC_V3], address: [pancakeswapV3PoolAddress] });
-      // Vérification cruciale
       if (subscriptionPancakeV3) {
         subscriptionPancakeV3.on("data", handleSwapEvent);
         subscriptionPancakeV3.on("error", (err) => log("❌ PancakeSwap V3 sub error:", err.message));
@@ -290,7 +321,6 @@ async function startBot() {
     
     if (uniswapUSDTBNB_005_PoolAddress) {
       subscriptionUniswapV3_005 = await web3.eth.subscribe("logs", { topics: [SWAP_EVENT_TOPIC_V3], address: [uniswapUSDTBNB_005_PoolAddress] });
-      // Vérification cruciale
       if (subscriptionUniswapV3_005) {
         subscriptionUniswapV3_005.on("data", handleSwapEvent);
         subscriptionUniswapV3_005.on("error", (err) => log("❌ Uniswap V3 sub error:", err.message));
@@ -298,6 +328,10 @@ async function startBot() {
         throw new Error("Failed to create Uniswap V3 subscription.");
       }
     }
+
+    // --- NOUVEAU : Démarrer le watchdog une fois que tout est initialisé ---
+    startWatchdog();
+
   } catch (err) {
     log(`❌ Fatal error during bot startup: ${err.message}`);
     log("Retrying in 10 seconds...");
@@ -310,6 +344,14 @@ async function startBot() {
  */
 function stopBot() {
     log("Stopping bot...");
+    
+    // --- NOUVEAU : Arrêter le watchdog pour éviter les faux positifs ---
+    if (watchdogInterval) {
+        clearInterval(watchdogInterval);
+        watchdogInterval = null;
+        log("🐶 Watchdog désactivé.");
+    }
+    
     cleanupSubscriptions();
     if (web3 && web3.currentProvider && web3.currentProvider.disconnect) {
         web3.currentProvider.disconnect();
