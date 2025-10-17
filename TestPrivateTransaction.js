@@ -20,8 +20,8 @@ async function runLiveTest() {
   console.log("🚀 Lancement du test d'intégration en direct pour bloXroute...");
 
   // --- Vérification des prérequis ---
-  if (!process.env.PRIVATE_KEY || !process.env.HTTP_RPC_URL || !process.env.BLOXROUTE_AUTH_HEADER) {
-    console.error("❌ Erreur: Les variables d'environnement PRIVATE_KEY, HTTP_RPC_URL, ou BLOXROUTE_AUTH_HEADER sont manquantes dans le fichier .env");
+  if (!process.env.PRIVATE_KEY || !process.env.HTTP_RPC_URL) {
+    console.error("❌ Erreur: Les variables d'environnement PRIVATE_KEY, HTTP_RPC_URL sont manquantes dans le fichier .env");
     return;
   }
 

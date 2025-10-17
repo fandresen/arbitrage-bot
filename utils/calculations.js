@@ -13,7 +13,6 @@ const ISwapRouterABI =
 // Define a minimal ABI for the specific function causing issues
 const QUOTER_V2_SINGLE_QUOTE_ABI = require("../abis/pancakeSwapQuoter.json");
 
-
 /**
  * Récupère le montant de sortie estimé pour un swap V3.
  * @param {Token} tokenIn - L'instance du token d'entrée.
@@ -24,35 +23,57 @@ const QUOTER_V2_SINGLE_QUOTE_ABI = require("../abis/pancakeSwapQuoter.json");
  * @param {string} quoterAddress - L'adresse du contrat Quoter V2 (PancakeSwap ou Uniswap).
  * @returns {Promise<BigInt|null>} Le montant de sortie estimé en BigInt, ou null en cas d'erreur.
  */
-async function getAmountOutV3(tokenIn, tokenOut, fee, amountIn, provider, quoterAddress) {
+async function getAmountOutV3(
+  tokenIn,
+  tokenOut,
+  fee,
+  amountIn,
+  provider,
+  quoterAddress
+) {
   try {
     // Valider si amountIn est un BigInt et est positif
-    if (typeof amountIn !== 'bigint' || amountIn <= 0n) {
-      console.warn(`⚠️ getAmountOutV3: amountIn invalide ou non positif. Reçu: ${amountIn}`);
+    if (typeof amountIn !== "bigint" || amountIn <= 0n) {
+      console.warn(
+        `⚠️ getAmountOutV3: amountIn invalide ou non positif. Reçu: ${amountIn}`
+      );
       return null;
     }
 
-    const quoterContract = new ethers.Contract(quoterAddress, QUOTER_V2_SINGLE_QUOTE_ABI, provider);
-    
+    const quoterContract = new ethers.Contract(
+      quoterAddress,
+      QUOTER_V2_SINGLE_QUOTE_ABI,
+      provider
+    );
+
     // Pour quoteExactInputSingle, sqrtPriceLimitX96 peut être 0 pour pas de limite inférieure
     // ou Math.sqrt(MAX_UINT256) pour pas de limite supérieure, selon le sens du swap.
     // Utiliser 0 pour une limite minimale permet de trouver n'importe quel prix tant que la liquidité existe.
-     const [amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate] = await quoterContract.quoteExactInputSingle.staticCall(
-      {
+    const [amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate] =
+      await quoterContract.quoteExactInputSingle.staticCall({
         tokenIn: tokenIn.address,
         tokenOut: tokenOut.address,
         fee: fee,
         amountIn: amountIn,
-        sqrtPriceLimitX96: 0 
-      }
-    );
+        sqrtPriceLimitX96: 0,
+      });
 
     return amountOut;
   } catch (err) {
-    if (err.code === 'CALL_EXCEPTION') {
-      console.error(`❌ Erreur getAmountOutV3 (${quoterAddress}) pour ${formatUnits(amountIn, tokenIn.decimals)} ${tokenIn.symbol} (Frais: ${fee / 100}%): CALL_EXCEPTION - ${err.message}. Cela peut indiquer une liquidité insuffisante pour le montant demandé ou un slippage trop élevé.`);
+    if (err.code === "CALL_EXCEPTION") {
+      console.error(
+        `❌ Erreur getAmountOutV3 (${quoterAddress}) pour ${formatUnits(
+          amountIn,
+          tokenIn.decimals
+        )} ${tokenIn.symbol} (Frais: ${fee / 100}%): CALL_EXCEPTION - ${
+          err.message
+        }. Cela peut indiquer une liquidité insuffisante pour le montant demandé ou un slippage trop élevé.`
+      );
     } else {
-      console.error(`❌ Erreur getAmountOutV3 (${quoterAddress}):`, err.message);
+      console.error(
+        `❌ Erreur getAmountOutV3 (${quoterAddress}):`,
+        err.message
+      );
     }
     return null;
   }
@@ -68,39 +89,29 @@ function calculatePriceV3(pool) {
     let priceValue = 0;
 
     // Determine the USDT/WBNB price based on token order in the pool
-    if (pool.token0.symbol === 'WBNB' && pool.token1.symbol === 'USDT') {
-      // If token0 is WBNB (18 decimals) and token1 is USDT (6 decimals)
-      // pool.token0Price is the price of WBNB in USDT. We need to adjust for decimal differences.
-      const rawPriceString = pool.token0Price.toSignificant(6);
-      const decimalDifference = pool.token0.decimals - pool.token1.decimals; // 18 - 6 = 12
-      priceValue = Number(rawPriceString) / (10 ** decimalDifference);
-
-    } else if (pool.token0.symbol === 'USDT' && pool.token1.symbol === 'WBNB') {
-      // If token0 is USDT (6 decimals) and token1 is WBNB (18 decimals)
-      // pool.token1Price is the price of WBNB in USDT. We need to adjust for decimal differences.
-      const rawPriceString = pool.token1Price.toSignificant(6);
-      const decimalDifference = pool.token1.decimals - pool.token0.decimals; // 18 - 6 = 12
-      priceValue = Number(rawPriceString) / (10 ** decimalDifference);
-
+    if (pool.token0.symbol === "WBNB" && pool.token1.symbol === "USDT") {
+      priceValue = parseFloat(pool.token0Price.toSignificant(6));
+    } else if (pool.token0.symbol === "USDT" && pool.token1.symbol === "WBNB") {
+      priceValue = parseFloat(pool.token1Price.toSignificant(6));
     } else {
       console.warn("⚠️ Pool de paires non supportées pour le calcul du prix.");
       return 0;
     }
-    
+
     // Ensure the price is valid
     if (isNaN(priceValue) || !isFinite(priceValue)) {
-      console.error("❌ Erreur de calcul du prix V3: Le prix résultant n'est pas un nombre valide.");
+      console.error(
+        "❌ Erreur de calcul du prix V3: Le prix résultant n'est pas un nombre valide."
+      );
       return 0;
     }
 
     return priceValue;
-
   } catch (err) {
     console.error("❌ Erreur lors du calcul du prix V3:", err.message);
     return 0;
   }
 }
-
 
 module.exports = {
   getAmountOutV3,

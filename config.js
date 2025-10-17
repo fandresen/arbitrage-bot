@@ -5,7 +5,7 @@ const USDT_ADDRESS = "0x55d398326f99059fF775485246999027B3197955";
 
 const TOKEN_DECIMALS = {
   [WBNB_ADDRESS.toLowerCase()]: 18,
-  [USDT_ADDRESS.toLowerCase()]: 6,
+  [USDT_ADDRESS.toLowerCase()]: 18,
 };
 
 //Adress du contrat déployé
@@ -40,7 +40,7 @@ const UNISWAP_V3_FEE_TIERS = {
 
 
 // Frais flashloan = 0.01%
-const VENUS_FLASH_LOAN_FEE = 0.0001;
+const FLASH_LOAN_FEE = 0.0001;
 
 // Montants de prêt pour la simulation
 const MIN_LOAN_AMOUNT_USDT = 1000;
@@ -77,7 +77,7 @@ module.exports = {
   PANCAKESWAP_V3_ROUTER, // Exporté
   PANCAKESWAP_V3_FEE_TIERS, // Exporté
 
-  VENUS_FLASH_LOAN_FEE,
+  VENUS_FLASH_LOAN_FEE: FLASH_LOAN_FEE,
   PROFIT_THRESHOLD_USD,
   EMAIL_CONFIG,
   MIN_LOAN_AMOUNT_USDT,

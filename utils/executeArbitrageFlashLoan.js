@@ -16,17 +16,27 @@ async function executeFlashLoanArbitrage(
   try {
     const signer = contract.runner;
     const address = await signer.getAddress();
-    
+
     // CORRIGÉ : Le nonce doit être exact. N'ajoutez pas +2, cela bloquerait vos transactions.
     const nonce = await signer.provider.getTransactionCount(address);
     const chainId = (await signer.provider.getNetwork()).chainId;
-    
-    // NOTE : Ce gasPrice est compétitif, vous pouvez le garder.
-    const gasPrice = parseUnits("3", "gwei"); 
 
-    // ATTENTION : 40,000 est beaucoup trop bas. J'ai remis une valeur sûre de 750,000.
-    const gasLimit = BigInt(750000); 
-    log(`⛽ Using manual gas limit: ${gasLimit.toString()}`);
+    // NOTE : Ce gasPrice est compétitif, vous pouvez le garder.
+    const gasPrice = parseUnits("3", "gwei");
+
+    // --- Estimation dynamique du gaz ---
+    log("⛽ Estimating gas for the arbitrage transaction...");
+    const estimatedGas = await contract.executeArbitrage.estimateGas(
+      loanAmountToken0,
+      loanAmountToken1,
+      swap1Params,
+      swap2Params
+    );
+    log(`   -> Gas estimated: ${estimatedGas.toString()}`);
+
+    // Ajout d'une marge de sécurité de 20%
+    const gasLimit = (estimatedGas * 120n) / 100n;
+    log(`   -> Gas limit with 20% margin: ${gasLimit.toString()}`);
 
     const tx = {
       to: await contract.getAddress(),
@@ -41,11 +51,11 @@ async function executeFlashLoanArbitrage(
       nonce,
       chainId,
       value: 0,
-      type: 0, 
+      type: 0,
     };
 
     const signedTx = await signer.signTransaction(tx);
-    
+
     // SUPPRIMÉ : On ne retire plus le "0x". La méthode eth_sendRawTransaction en a besoin.
     console.log("SIGNED TRANSACTION: ", signedTx);
 
@@ -58,7 +68,7 @@ async function executeFlashLoanArbitrage(
         method: "eth_sendRawTransaction", // NOUVELLE MÉTHODE
         params: [signedTx], // NOUVEAU FORMAT DE PARAMÈTRES (un tableau avec la tx signée)
         id: 1,
-      },
+      }
       // SUPPRIMÉ : L'en-tête d'autorisation n'est plus nécessaire.
     );
 
@@ -74,7 +84,6 @@ async function executeFlashLoanArbitrage(
       "Private TX Sent via 48 Club",
       `Arbitrage transaction successfully sent. Hash: ${txHash}`
     );
-
   } catch (error) {
     const errorMessage = error?.response?.data?.error?.message || error.message;
     log("❌ Error sending private transaction to 48 Club:", errorMessage);
