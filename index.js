@@ -30,6 +30,7 @@ const {
 const { getV3PoolAddress, getV3PoolState, createV3Pool } = require("./utils/v3contracts");
 const { getAmountOutV3, calculatePriceV3 } = require("./utils/calculations");
 const { sendEmailNotification } = require("./utils/notifications");
+const { sendSlackNotification } = require("./utils/slackNotifier");
 const FlashLoanABI = require("./abis/FlashLoan.json").abi;
 const { executeFlashLoanArbitrage } = require("./utils/executeArbitrageFlashLoan");
 
@@ -249,7 +250,7 @@ async function checkArbitrageOpportunity() {
     const loanAmountStr = formatUnits(bestOpp.loanAmountUSDT, usdtDecimals);
     const msg = `💰 EXECUTION: ${bestOpp.path} | Profit: ${bestOpp.profit.toFixed(4)} USD | Loan: ${loanAmountStr} USD`;
     log(msg);
-    sendEmailNotification(`Arbitrage Triggered (${bestOpp.path})`, msg);
+    sendSlackNotification(`Arbitrage Triggered (${bestOpp.path})\n${msg}`, "info");
 
     const amountOutMinWBNB = 0n;
     const amountOutMinUSDT = 0n;
@@ -260,11 +261,12 @@ async function checkArbitrageOpportunity() {
 
     await executeFlashLoanArbitrage(
         flashLoanContract,
-        { log, sendEmailNotification, parseUnits }, 
+        { log, sendEmailNotification, sendSlackNotification, parseUnits }, 
         bestOpp.loanAmountUSDT,
         0n,
         swap1Params,
-        swap2Params
+        swap2Params,
+        bestOpp
     );
   } else {
      log(`💤 No profitable opportunity found. Best path profit: ${bestOpp.profit.toFixed(4)} USD.`);
