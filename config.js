@@ -43,7 +43,7 @@ const UNISWAP_V3_FEE_TIERS = {
 const FLASH_LOAN_FEE = 0.0001;
 
 // Montants de prêt pour la simulation
-const MIN_LOAN_AMOUNT_USDT = 2000;
+const MIN_LOAN_AMOUNT_USDT = 1000;
 const MAX_LOAN_AMOUNT_USDT = 500000;
 const LOAN_AMOUNT_INCREMENT_USDT = 100000;
 

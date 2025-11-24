@@ -207,6 +207,37 @@ async function checkArbitrageOpportunity() {
 
   log(`➡️ Prices: PancakeSwap V3: ${pancakeswapV3Price.toFixed(4)} | Uniswap V3: ${uniswap005Price.toFixed(4)}`);
 
+  // 1. Calcul des écarts en pourcentage
+  // Prix A > Prix B ?
+  const spreadUniToPancake = (pancakeswapV3Price - uniswap005Price) / uniswap005Price; // Si on achète Uni (bas) pour vendre Pancake (haut)
+  const spreadPancakeToUni = (uniswap005Price - pancakeswapV3Price) / pancakeswapV3Price; // Si on achète Pancake (bas) pour vendre Uni (haut)
+
+  // 2. Définition du seuil minimal de rentabilité (Break-even)
+  // Il faut couvrir : Frais Flashloan + Frais Swap (Uni) + Frais Swap (Pancake)
+  // Frais Flashloan = VENUS_FLASH_LOAN_FEE (ex: 0.05%)
+  // Frais Swap = 0.05% * 2 = 0.1%
+  // Marge de sécurité = 0.05%
+  // Total estimé = ~0.20% (0.002)
+  // On utilise une estimation conservatrice pour ne pas rater d'opportunités limites
+  const MIN_SPREAD_REQUIRED = VENUS_FLASH_LOAN_FEE + 0.0015; // Flashloan + ~0.15% de frais de trading
+  log(`MIN SPREAD = ${MIN_SPREAD_REQUIRED*100}%`);
+
+  // 3. Vérification
+  let potentialDirection = null;
+
+  if (spreadUniToPancake > MIN_SPREAD_REQUIRED) {
+      potentialDirection = "UniV3 -> PancakeV3";
+      log(`👀 Spread intéressant détecté (${(spreadUniToPancake*100).toFixed(3)}%): ${potentialDirection}`);
+  } else if (spreadPancakeToUni > MIN_SPREAD_REQUIRED) {
+      potentialDirection = "PancakeV3 -> UniV3";
+      log(`👀 Spread intéressant détecté (${(spreadPancakeToUni*100).toFixed(3)}%): ${potentialDirection}`);
+  } else {
+      // 🛑 ARRÊT IMMÉDIAT : Pas de différence de prix suffisante.
+      // On ne lance pas la boucle coûteuse. On économise les appels RPC.
+      log(` Spread PAS intéressant(${(spreadUniToPancake*100).toFixed(3)}%)`);
+      return;
+  }
+
   let bestOpp = { profit: -Infinity, loanAmountUSDT: 0n, bnbOut: 0n, finalUSDTOut: 0n, path: "" };
   const usdtDecimals = TOKEN_DECIMALS[USDT_ADDRESS.toLowerCase()];
 
