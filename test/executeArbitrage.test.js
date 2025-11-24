@@ -7,9 +7,6 @@ const ethers = require("ethers");
 // Mocker les dépendances externes
 jest.mock("axios");
 
-// Variables d'environnement
-process.env.BLOXROUTE_AUTH_HEADER = "fake-auth-header";
-
 describe("executeFlashLoanArbitrage", () => {
   let mockContract, mockSigner, dependencies;
 
@@ -20,6 +17,7 @@ describe("executeFlashLoanArbitrage", () => {
       provider: {
         getTransactionCount: jest.fn().mockResolvedValue(10),
         getNetwork: jest.fn().mockResolvedValue({ chainId: 56 }),
+        waitForTransaction: jest.fn().mockResolvedValue({ status: 1 }), // Default success
       },
       signTransaction: jest.fn().mockResolvedValue("0xsignedTransaction"),
     };
@@ -40,6 +38,7 @@ describe("executeFlashLoanArbitrage", () => {
     dependencies = {
       log: jest.fn(),
       sendEmailNotification: jest.fn(),
+      sendSlackNotification: jest.fn(),
       parseUnits: ethers.parseUnits, // Utiliser le vrai parseUnits
     };
 
@@ -47,8 +46,10 @@ describe("executeFlashLoanArbitrage", () => {
     axios.post.mockClear();
   });
 
-  it("devrait construire et envoyer une transaction privée via bloXroute", async () => {
+  it("devrait construire et envoyer une transaction privée via 48 Club", async () => {
     axios.post.mockResolvedValue({ data: { result: "0xtxHash" } });
+
+    const expectedProfit = { profit: 10.5, path: "Uni -> Pancake" };
 
     await executeFlashLoanArbitrage(
       mockContract,
@@ -56,7 +57,8 @@ describe("executeFlashLoanArbitrage", () => {
       BigInt(1000), // loanAmountToken0
       BigInt(0),   // loanAmountToken1
       {},          // swap1Params
-      {}           // swap2Params
+      {},          // swap2Params
+      expectedProfit
     );
 
     // Vérifier l'estimation de gaz
@@ -65,56 +67,46 @@ describe("executeFlashLoanArbitrage", () => {
     // Vérifier la signature de la transaction
     expect(mockSigner.signTransaction).toHaveBeenCalled();
     
-    // Vérifier l'appel à bloXroute
+    // Vérifier l'appel à 48 Club
     expect(axios.post).toHaveBeenCalledWith(
-      "https://api.blxrbdn.com/",
+      "https://rpc.48.club",
       expect.objectContaining({
-        method: "bsc_private_tx",
-        params: { transaction: "signedTransaction" }, // "0x" est enlevé par la fonction
-      }),
-      expect.objectContaining({
-        headers: {
-          "Authorization": "fake-auth-header",
-          "Content-Type": "application/json",
-        },
+        method: "eth_sendRawTransaction",
+        params: ["0xsignedTransaction"],
+        id: 1,
       })
     );
 
     // Vérifier les notifications
-    expect(dependencies.log).toHaveBeenCalledWith("✅ PRIVATE Transaction sent via bloXroute. Hash: 0xtxHash");
+    expect(dependencies.log).toHaveBeenCalledWith(expect.stringContaining("Transaction sent via 48 Club"));
+    expect(dependencies.sendSlackNotification).toHaveBeenCalledWith(
+        expect.stringContaining("Arbitrage TX Sent via 48 Club"),
+        "info"
+    );
+
+    // Vérifier la confirmation et le succès
     expect(dependencies.sendEmailNotification).toHaveBeenCalledWith(
-        "Private TX Sent via bloXroute",
-        "Arbitrage transaction successfully sent. Hash: 0xtxHash"
+        "💰 Arbitrage PROFIT Confirmed!",
+        expect.stringContaining("Transaction 0xtxHash was successful")
+    );
+    expect(dependencies.sendSlackNotification).toHaveBeenCalledWith(
+        expect.stringContaining("Arbitrage PROFIT Confirmed"),
+        "success"
     );
   });
 
-  it("devrait gérer une erreur de l'API bloXroute", async () => {
-    const error = { response: { data: { error: { message: "bloXroute error" } } } };
+  it("devrait gérer une erreur de l'API 48 Club", async () => {
+    const error = { response: { data: { error: { message: "48 Club error" } } } };
     axios.post.mockRejectedValue(error);
 
-    await executeFlashLoanArbitrage(mockContract, dependencies, BigInt(1000), 0n, {}, {});
+    await executeFlashLoanArbitrage(mockContract, dependencies, BigInt(1000), 0n, {}, {}, {});
     
     expect(dependencies.log).toHaveBeenCalledWith(
-        "❌ Error sending private transaction to bloXroute:", "bloXroute error"
+        "❌ Error sending private transaction to 48 Club:", "48 Club error"
     );
-    expect(dependencies.sendEmailNotification).toHaveBeenCalledWith(
-        "Private Arbitrage FAILED",
-        "The private transaction via bloXroute failed. Reason: bloXroute error"
+    expect(dependencies.sendSlackNotification).toHaveBeenCalledWith(
+        expect.stringContaining("Private Arbitrage FAILED"),
+        "error"
     );
-  });
-
-  it("ne devrait rien faire si BLOXROUTE_AUTH_HEADER n'est pas défini", async () => {
-    delete process.env.BLOXROUTE_AUTH_HEADER;
-
-    await executeFlashLoanArbitrage(mockContract, dependencies, BigInt(1000), 0n, {}, {});
-
-    expect(axios.post).not.toHaveBeenCalled();
-    expect(dependencies.sendEmailNotification).toHaveBeenCalledWith(
-        "Private Arbitrage FAILED",
-        "The private transaction failed because the BLOXROUTE_AUTH_HEADER is missing."
-    );
-
-    // Rétablir pour les autres tests
-    process.env.BLOXROUTE_AUTH_HEADER = "fake-auth-header";
   });
 });

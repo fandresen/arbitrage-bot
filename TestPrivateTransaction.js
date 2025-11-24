@@ -63,6 +63,12 @@ async function runLiveTest() {
       console.log(`Message: ${text}`);
       console.log(`--------------------`);
     },
+    sendSlackNotification: (message, type) => {
+      console.log(`--- SLACK SIMULÉ ---`);
+      console.log(`Type: ${type}`);
+      console.log(`Message: ${message}`);
+      console.log(`--------------------`);
+    },
     parseUnits: ethers.parseUnits,
   };
 

@@ -12,14 +12,25 @@ describe("slackNotifier.js", () => {
     jest.clearAllMocks();
   });
 
-  it("should send a notification to Slack with correct payload", async () => {
+  it("should send a notification to Slack with correct payload (info)", async () => {
     axios.post.mockResolvedValue({ status: 200 });
 
     await sendSlackNotification("Test Message", "info");
 
     expect(axios.post).toHaveBeenCalledWith(
       "https://hooks.slack.com/services/TEST/WEBHOOK",
-      { text: "ℹ️ Test Message" }
+      expect.objectContaining({
+        blocks: expect.arrayContaining([
+            expect.objectContaining({
+                type: "header",
+                text: expect.objectContaining({ text: "ℹ️ Notification Bot Arbitrage" })
+            }),
+            expect.objectContaining({
+                type: "section",
+                text: expect.objectContaining({ text: "*Message :*\nTest Message" })
+            })
+        ])
+      })
     );
   });
 
@@ -30,7 +41,14 @@ describe("slackNotifier.js", () => {
 
     expect(axios.post).toHaveBeenCalledWith(
       expect.any(String),
-      { text: "❌ Error Message" }
+      expect.objectContaining({
+        blocks: expect.arrayContaining([
+            expect.objectContaining({
+                type: "header",
+                text: expect.objectContaining({ text: "🚨 Erreur Critique" })
+            })
+        ])
+      })
     );
   });
 
@@ -41,7 +59,14 @@ describe("slackNotifier.js", () => {
 
     expect(axios.post).toHaveBeenCalledWith(
       expect.any(String),
-      { text: "✅ Success Message" }
+      expect.objectContaining({
+        blocks: expect.arrayContaining([
+            expect.objectContaining({
+                type: "header",
+                text: expect.objectContaining({ text: "💰 Succès Arbitrage" })
+            })
+        ])
+      })
     );
   });
 
@@ -52,8 +77,7 @@ describe("slackNotifier.js", () => {
     await sendSlackNotification("Test", "info");
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "❌ Error sending Slack notification:",
-      "Network Error"
+      expect.stringContaining("❌ Échec de l'envoi de l'alerte à Slack")
     );
     consoleErrorSpy.mockRestore();
   });
@@ -67,7 +91,7 @@ describe("slackNotifier.js", () => {
 
     expect(axios.post).not.toHaveBeenCalled();
     expect(consoleWarnSpy).toHaveBeenCalledWith(
-      "⚠️ SLACK_WEBHOOK_URL not configured. Slack notification skipped."
+      "⚠️ SLACK_WEBHOOK_URL n'est pas configuré. Alerte non envoyée."
     );
 
     config.SLACK_WEBHOOK_URL = originalUrl;

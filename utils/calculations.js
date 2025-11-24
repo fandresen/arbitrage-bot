@@ -12,6 +12,7 @@ const ISwapRouterABI =
 
 // Define a minimal ABI for the specific function causing issues
 const QUOTER_V2_SINGLE_QUOTE_ABI = require("../abis/pancakeSwapQuoter.json");
+const { sendSlackNotification } = require("./slackNotifier");
 
 /**
  * Récupère le montant de sortie estimé pour un swap V3.
@@ -69,8 +70,20 @@ async function getAmountOutV3(
           err.message
         }. Cela peut indiquer une liquidité insuffisante pour le montant demandé ou un slippage trop élevé.`
       );
+      sendSlackNotification(
+        `❌ Erreur getAmountOutV3 (${quoterAddress}) pour ${formatUnits(
+          amountIn,
+          tokenIn.decimals
+        )} ${tokenIn.symbol} (Frais: ${fee / 100}%): CALL_EXCEPTION - ${
+          err.message
+        }. Cela peut indiquer une liquidité insuffisante pour le montant demandé ou un slippage trop élevé.`
+      );
     } else {
       console.error(
+        `❌ Erreur getAmountOutV3 (${quoterAddress}):`,
+        err.message
+      );
+      sendSlackNotification(
         `❌ Erreur getAmountOutV3 (${quoterAddress}):`,
         err.message
       );
