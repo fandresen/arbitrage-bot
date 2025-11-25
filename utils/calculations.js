@@ -70,22 +70,14 @@ async function getAmountOutV3(
           err.message
         }. Cela peut indiquer une liquidité insuffisante pour le montant demandé ou un slippage trop élevé.`
       );
-      sendSlackNotification(
-        `❌ Erreur getAmountOutV3 (${quoterAddress}) pour ${formatUnits(
-          amountIn,
-          tokenIn.decimals
-        )} ${tokenIn.symbol} (Frais: ${fee / 100}%): CALL_EXCEPTION - ${
-          err.message
-        }. Cela peut indiquer une liquidité insuffisante pour le montant demandé ou un slippage trop élevé.`
-      );
     } else {
       console.error(
         `❌ Erreur getAmountOutV3 (${quoterAddress}):`,
         err.message
       );
       sendSlackNotification(
-        `❌ Erreur getAmountOutV3 (${quoterAddress}):`,
-        err.message
+        `❌ Erreur getAmountOutV3 (${quoterAddress}): ${err.message}`,"error"
+        
       );
     }
     return null;

@@ -66,6 +66,7 @@ async function executeFlashLoanArbitrage(
     );
 
     if (data.error) {
+      sendSlackNotification(`48 Club API Error: ${data.error.message}`,"error");
       throw new Error(`48 Club API Error: ${data.error.message}`);
     }
 
