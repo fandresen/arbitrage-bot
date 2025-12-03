@@ -241,7 +241,8 @@ async function checkArbitrageOpportunity() {
   let bestOpp = { profit: -Infinity, loanAmountUSDT: 0n, bnbOut: 0n, finalUSDTOut: 0n, path: "" };
   const usdtDecimals = TOKEN_DECIMALS[USDT_ADDRESS.toLowerCase()];
 
-  for (let loanAmountNum = MIN_LOAN_AMOUNT_USDT; loanAmountNum <= MAX_LOAN_AMOUNT_USDT; loanAmountNum += LOAN_AMOUNT_INCREMENT_USDT) {
+  // for (let loanAmountNum = MIN_LOAN_AMOUNT_USDT; loanAmountNum <= MAX_LOAN_AMOUNT_USDT; loanAmountNum += LOAN_AMOUNT_INCREMENT_USDT) {
+    let loanAmountNum = 2000;
     const currentLoanAmountUSDT = parseUnits(loanAmountNum.toString(), usdtDecimals);
     const bnbFromUni = await getAmountOutV3(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOWEST, currentLoanAmountUSDT, ethersProvider, UNISWAP_V3_QUOTER_V2);
     if (bnbFromUni) {
@@ -259,7 +260,7 @@ async function checkArbitrageOpportunity() {
         if (profit > bestOpp.profit) bestOpp = { profit, loanAmountUSDT: currentLoanAmountUSDT, bnbOut: bnbFromPancake, finalUSDTOut: usdtFromUni, path: "PancakeV3 -> UniV3" };
       }
     }
-  }
+  // }
 
   // --- Log CSV ---
   const timestampForCsv = new Date().toISOString();
