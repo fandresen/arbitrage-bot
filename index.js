@@ -5,6 +5,7 @@ const path = require("path");
 const { Web3 } = require("web3");
 const { parseUnits, formatUnits, JsonRpcProvider, ethers } = require("ethers");
 const { Token } = require("@uniswap/sdk-core");
+const { Pool } = require("@uniswap/v3-sdk");
 
 // Import de la configuration
 const config = require("./config");
@@ -24,11 +25,14 @@ const {
   UNISWAP_V3_QUOTER_V2,
   UNISWAP_V3_FEE_TIERS,
   FLASH_LOAN_CONTRACT_ADDRESS,
+  UNISWAP_V3_TICKET_LENS,
+  PANCAKESWAP_V3_TICKET_LENS
 } = config;
 
 // Import des utilitaires et ABIs
 const { getV3PoolAddress, getV3PoolState, createV3Pool } = require("./utils/v3contracts");
-const { getAmountOutV3, calculatePriceV3 } = require("./utils/calculations");
+const { calculatePriceV3,getAmountOutLocal } = require("./utils/calculations");
+const { fetchTickData, createSDKPool } = require("./utils/poolData");
 const { sendEmailNotification } = require("./utils/notifications");
 const { sendSlackNotification } = require("./utils/slackNotifier");
 const FlashLoanABI = require("./abis/FlashLoan.json").abi;
@@ -48,6 +52,9 @@ function log(...args) {
 
 // Stockage de l'état des pools en mémoire pour un accès instantané
 const poolStates = {};
+
+let pancakePoolSDK = null;
+let uniPoolSDK = null;
 
 // ABI pour décoder les données de l'événement Swap de Uniswap V3
 const SWAP_EVENT_ABI = [
@@ -161,8 +168,22 @@ async function loadPoolsAndInitialStates() {
   };
 
   pancakeswapV3PoolAddress = await loadPool("PancakeSwap V3", PANCAKESWAP_V3_FACTORY, WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW);
+  if (poolStates[pancakeswapV3PoolAddress.toLowerCase()]) {
+      const state = poolStates[pancakeswapV3PoolAddress.toLowerCase()];
+      const ticks = await fetchTickData(pancakeswapV3PoolAddress, state.tick, ethersProvider,PANCAKESWAP_V3_TICKET_LENS);
+      pancakePoolSDK = createSDKPool(WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW, state, ticks);
+      log(`✅ Pancake SDK Pool created with ${ticks.length} ticks.`);
+  }
+
   try {
     uniswapUSDTBNB_005_PoolAddress = await loadPool("Uniswap V3 0.05%", UNISWAP_V3_FACTORY, USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOW);
+
+    if (poolStates[uniswapUSDTBNB_005_PoolAddress.toLowerCase()]) {
+        const state = poolStates[uniswapUSDTBNB_005_PoolAddress.toLowerCase()];
+        const ticks = await fetchTickData(uniswapUSDTBNB_005_PoolAddress, state.tick, ethersProvider,UNISWAP_V3_TICKET_LENS);
+        uniPoolSDK = createSDKPool(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOW, state, ticks);
+        log(`✅ Uniswap SDK Pool created with ${ticks.length} ticks.`);
+    }
   } catch (e) {
     log(`⚠️ Could not load Uniswap V3 pool. Bot will run with limited capacity. Error: ${e.message}`);
   }
@@ -172,20 +193,49 @@ async function loadPoolsAndInitialStates() {
  * Gestionnaire d'événements qui décode les logs et met à jour l'état en mémoire.
  */
 async function handleSwapEvent(eventLog) {
-  // --- NOUVEAU : Met à jour le timestamp de la dernière activité ---
   lastActivityTime = Date.now();
-
   const poolAddress = eventLog.address.toLowerCase();
+
   try {
     const decodedData = web3.eth.abi.decodeLog(SWAP_EVENT_ABI, eventLog.data, eventLog.topics.slice(1));
+    
+    // Mise à jour du state basique
     poolStates[poolAddress] = {
       sqrtPriceX96: decodedData.sqrtPriceX96,
       tick: Number(decodedData.tick),
       liquidity: decodedData.liquidity,
     };
+
+    // --> NOUVEAU : Mise à jour de l'instance SDK concernée
+    // On recrée l'instance Pool pour qu'elle prenne en compte le nouveau tick/prix
+    // Note: On garde les mêmes ticksDataProvider car la liquidité immobile n'a pas changé (sauf si mint/burn, qu'on ignore pour l'instant)
+    if (poolAddress === pancakeswapV3PoolAddress.toLowerCase() && pancakePoolSDK) {
+         pancakePoolSDK = new Pool(
+            pancakePoolSDK.token0, 
+            pancakePoolSDK.token1, 
+            pancakePoolSDK.fee,
+            decodedData.sqrtPriceX96.toString(), 
+            decodedData.liquidity.toString(), 
+            Number(decodedData.tick),
+            pancakePoolSDK.tickDataProvider // On réutilise les ticks chargés au démarrage
+         );
+    } 
+    // 2. Mise à jour Uniswap
+    else if (uniswapUSDTBNB_005_PoolAddress && poolAddress === uniswapUSDTBNB_005_PoolAddress.toLowerCase() && uniPoolSDK) {
+         uniPoolSDK = new Pool(
+            uniPoolSDK.token0, 
+            uniPoolSDK.token1, 
+            uniPoolSDK.fee,
+            decodedData.sqrtPriceX96.toString(), 
+            decodedData.liquidity.toString(), 
+            Number(decodedData.tick),
+            uniPoolSDK.tickDataProvider
+         );
+    }
+
     await checkArbitrageOpportunity();
   } catch (error) {
-    log(`❌ Error decoding swap event for ${poolAddress}:`, error.message);
+    log(`❌ Error decoding swap event:`, error.message);
   }
 }
 
@@ -241,19 +291,31 @@ async function checkArbitrageOpportunity() {
   let bestOpp = { profit: -Infinity, loanAmountUSDT: 0n, bnbOut: 0n, finalUSDTOut: 0n, path: "" };
   const usdtDecimals = TOKEN_DECIMALS[USDT_ADDRESS.toLowerCase()];
 
+  if (!pancakePoolSDK || !pancakePoolSDK.getOutputAmount) {
+     log("⚠️ Pancake Pool SDK not ready yet.");
+    return;
+  }
+  if (
+    uniswapUSDTBNB_005_PoolAddress &&
+    (!uniPoolSDK || !uniPoolSDK.getOutputAmount)
+  ) {
+     log("⚠️ Uniswap Pool SDK not ready yet.");
+    return;
+  }
+
   for (let loanAmountNum = MIN_LOAN_AMOUNT_USDT; loanAmountNum <= MAX_LOAN_AMOUNT_USDT; loanAmountNum += LOAN_AMOUNT_INCREMENT_USDT) {
     const currentLoanAmountUSDT = parseUnits(loanAmountNum.toString(), usdtDecimals);
-    const bnbFromUni = await getAmountOutV3(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOW, currentLoanAmountUSDT, ethersProvider, UNISWAP_V3_QUOTER_V2);
+    const bnbFromUni = await getAmountOutLocal(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOW, currentLoanAmountUSDT, ethersProvider, UNISWAP_V3_QUOTER_V2);
     if (bnbFromUni) {
-      const usdtFromPancake = await getAmountOutV3(WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW, bnbFromUni, ethersProvider, PANCAKESWAP_V3_QUOTER_V2);
+      const usdtFromPancake = await getAmountOutLocal(WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW, bnbFromUni, ethersProvider, PANCAKESWAP_V3_QUOTER_V2);
       if (usdtFromPancake) {
         const profit = (parseFloat(formatUnits(usdtFromPancake, usdtDecimals)) - loanAmountNum) * (1 - VENUS_FLASH_LOAN_FEE);
         if (profit > bestOpp.profit) bestOpp = { profit, loanAmountUSDT: currentLoanAmountUSDT, bnbOut: bnbFromUni, finalUSDTOut: usdtFromPancake, path: "UniV3 -> PancakeV3" };
       }
     }
-    const bnbFromPancake = await getAmountOutV3(USDT_TOKEN, WBNB_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW, currentLoanAmountUSDT, ethersProvider, PANCAKESWAP_V3_QUOTER_V2);
+    const bnbFromPancake = await getAmountOutLocal(USDT_TOKEN, WBNB_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW, currentLoanAmountUSDT, ethersProvider, PANCAKESWAP_V3_QUOTER_V2);
     if (bnbFromPancake) {
-      const usdtFromUni = await getAmountOutV3(WBNB_TOKEN, USDT_TOKEN, UNISWAP_V3_FEE_TIERS.LOW, bnbFromPancake, ethersProvider, UNISWAP_V3_QUOTER_V2);
+      const usdtFromUni = await getAmountOutLocal(WBNB_TOKEN, USDT_TOKEN, UNISWAP_V3_FEE_TIERS.LOW, bnbFromPancake, ethersProvider, UNISWAP_V3_QUOTER_V2);
       if (usdtFromUni) {
         const profit = (parseFloat(formatUnits(usdtFromUni, usdtDecimals)) - loanAmountNum) * (1 - VENUS_FLASH_LOAN_FEE);
         if (profit > bestOpp.profit) bestOpp = { profit, loanAmountUSDT: currentLoanAmountUSDT, bnbOut: bnbFromPancake, finalUSDTOut: usdtFromUni, path: "PancakeV3 -> UniV3" };
