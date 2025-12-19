@@ -170,7 +170,7 @@ async function loadPoolsAndInitialStates() {
   pancakeswapV3PoolAddress = await loadPool("PancakeSwap V3", PANCAKESWAP_V3_FACTORY, WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW);
   if (poolStates[pancakeswapV3PoolAddress.toLowerCase()]) {
       const state = poolStates[pancakeswapV3PoolAddress.toLowerCase()];
-      const ticks = await fetchTickData(pancakeswapV3PoolAddress, state.tick, ethersProvider,PANCAKESWAP_V3_TICKET_LENS);
+      const ticks = await fetchTickData(pancakeswapV3PoolAddress, state.tick, ethersProvider,PANCAKESWAP_V3_TICKET_LENS,PANCAKESWAP_V3_FEE_TIERS.LOW);
       pancakePoolSDK = createSDKPool(WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW, state, ticks);
       log(`✅ Pancake SDK Pool created with ${ticks.length} ticks.`);
   }
@@ -180,7 +180,7 @@ async function loadPoolsAndInitialStates() {
 
     if (poolStates[uniswapUSDTBNB_005_PoolAddress.toLowerCase()]) {
         const state = poolStates[uniswapUSDTBNB_005_PoolAddress.toLowerCase()];
-        const ticks = await fetchTickData(uniswapUSDTBNB_005_PoolAddress, state.tick, ethersProvider,UNISWAP_V3_TICKET_LENS);
+        const ticks = await fetchTickData(uniswapUSDTBNB_005_PoolAddress, state.tick, ethersProvider,UNISWAP_V3_TICKET_LENS,UNISWAP_V3_FEE_TIERS.LOW);
         uniPoolSDK = createSDKPool(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOW, state, ticks);
         log(`✅ Uniswap SDK Pool created with ${ticks.length} ticks.`);
     }
@@ -251,8 +251,8 @@ async function checkArbitrageOpportunity() {
   const uniState = uniswapUSDTBNB_005_PoolAddress ? poolStates[uniswapUSDTBNB_005_PoolAddress.toLowerCase()] : null;
   if (!pancakeState || !uniState) return;
 
-  const pancakeswapV3Price = calculatePriceV3(createV3Pool(WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW, pancakeState.sqrtPriceX96, pancakeState.tick, pancakeState.liquidity));
-  const uniswap005Price = calculatePriceV3(createV3Pool(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOW, uniState.sqrtPriceX96, uniState.tick, uniState.liquidity));
+  const pancakeswapV3Price = calculatePriceV3(createV3Pool(WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW, pancakeState.sqrtPriceX96, pancakeState.tick, pancakeState.liquidity), WBNB_TOKEN);
+  const uniswap005Price = calculatePriceV3(createV3Pool(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOW, uniState.sqrtPriceX96, uniState.tick, uniState.liquidity), WBNB_TOKEN);
   if (!pancakeswapV3Price || !uniswap005Price) return;
 
   log(`➡️ Prices: PancakeSwap V3: ${pancakeswapV3Price.toFixed(4)} | Uniswap V3: ${uniswap005Price.toFixed(4)}`);
@@ -305,17 +305,25 @@ async function checkArbitrageOpportunity() {
 
   for (let loanAmountNum = MIN_LOAN_AMOUNT_USDT; loanAmountNum <= MAX_LOAN_AMOUNT_USDT; loanAmountNum += LOAN_AMOUNT_INCREMENT_USDT) {
     const currentLoanAmountUSDT = parseUnits(loanAmountNum.toString(), usdtDecimals);
-    const bnbFromUni = await getAmountOutLocal(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOW, currentLoanAmountUSDT, ethersProvider, UNISWAP_V3_QUOTER_V2);
+    
+    // Path: Uni -> Pancake
+    // 1. Buy WBNB on Uniswap (Input: USDT)
+    const bnbFromUni = await getAmountOutLocal(uniPoolSDK, USDT_TOKEN, currentLoanAmountUSDT);
     if (bnbFromUni) {
-      const usdtFromPancake = await getAmountOutLocal(WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW, bnbFromUni, ethersProvider, PANCAKESWAP_V3_QUOTER_V2);
+      // 2. Sell WBNB on Pancake (Input: WBNB)
+      const usdtFromPancake = await getAmountOutLocal(pancakePoolSDK, WBNB_TOKEN, bnbFromUni);
       if (usdtFromPancake) {
         const profit = (parseFloat(formatUnits(usdtFromPancake, usdtDecimals)) - loanAmountNum) * (1 - VENUS_FLASH_LOAN_FEE);
         if (profit > bestOpp.profit) bestOpp = { profit, loanAmountUSDT: currentLoanAmountUSDT, bnbOut: bnbFromUni, finalUSDTOut: usdtFromPancake, path: "UniV3 -> PancakeV3" };
       }
     }
-    const bnbFromPancake = await getAmountOutLocal(USDT_TOKEN, WBNB_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOW, currentLoanAmountUSDT, ethersProvider, PANCAKESWAP_V3_QUOTER_V2);
+
+    // Path: Pancake -> Uni
+    // 1. Buy WBNB on Pancake (Input: USDT)
+    const bnbFromPancake = await getAmountOutLocal(pancakePoolSDK, USDT_TOKEN, currentLoanAmountUSDT);
     if (bnbFromPancake) {
-      const usdtFromUni = await getAmountOutLocal(WBNB_TOKEN, USDT_TOKEN, UNISWAP_V3_FEE_TIERS.LOW, bnbFromPancake, ethersProvider, UNISWAP_V3_QUOTER_V2);
+      // 2. Sell WBNB on Uniswap (Input: WBNB)
+      const usdtFromUni = await getAmountOutLocal(uniPoolSDK, WBNB_TOKEN, bnbFromPancake);
       if (usdtFromUni) {
         const profit = (parseFloat(formatUnits(usdtFromUni, usdtDecimals)) - loanAmountNum) * (1 - VENUS_FLASH_LOAN_FEE);
         if (profit > bestOpp.profit) bestOpp = { profit, loanAmountUSDT: currentLoanAmountUSDT, bnbOut: bnbFromPancake, finalUSDTOut: usdtFromUni, path: "PancakeV3 -> UniV3" };

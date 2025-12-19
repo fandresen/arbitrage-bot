@@ -86,20 +86,45 @@ const { sendSlackNotification } = require("./slackNotifier");
 /**
  * Calcule le prix d'un token par rapport à un autre dans une pool V3.
  * @param {Pool} pool - L'instance de la pool V3.
- * @returns {number} Le prix du token1 par rapport au token0 (USDT par WBNB).
+ * @param {Token} baseToken - Le token de base pour le prix (ex: WBNB).
+ * @returns {number} Le prix du quoteToken (ex: USDT) par rapport au baseToken.
  */
-function calculatePriceV3(pool) {
+function calculatePriceV3(pool, baseToken = null) {
   try {
     let priceValue = 0;
 
-    // Determine the USDT/WBNB price based on token order in the pool
-    if (pool.token0.symbol === "WBNB" && pool.token1.symbol === "USDT") {
-      priceValue = parseFloat(pool.token0Price.toSignificant(6));
-    } else if (pool.token0.symbol === "USDT" && pool.token1.symbol === "WBNB") {
-      priceValue = parseFloat(pool.token1Price.toSignificant(6));
-    } else {
-      console.warn("⚠️ Pool de paires non supportées pour le calcul du prix.");
-      return 0;
+    // Si on fournit un baseToken, on utilise la logique générique
+    if (baseToken) {
+      if (pool.token0.address.toLowerCase() === baseToken.address.toLowerCase()) {
+        // Prix de token0 en termes de token1 (quote)
+        priceValue = parseFloat(pool.token0Price.toSignificant(6));
+      } else if (pool.token1.address.toLowerCase() === baseToken.address.toLowerCase()) {
+        // Prix de token1 en termes de token0 (quote)
+        priceValue = parseFloat(pool.token1Price.toSignificant(6));
+      } else {
+        console.warn(`⚠️ calculatePriceV3: baseToken (${baseToken.symbol}) ne correspond pas aux tokens du pool (${pool.token0.symbol}/${pool.token1.symbol})`);
+        return 0;
+      }
+    } 
+    // Fallback Legacy (si pas de baseToken fourni)
+    else {
+       // Determine the USDT/WBNB price based on token order in the pool - LEGACY LOGIC
+      if (pool.token0.symbol === "WBNB" && pool.token1.symbol === "USDT") {
+        priceValue = parseFloat(pool.token0Price.toSignificant(6));
+      } else if (pool.token0.symbol === "USDT" && pool.token1.symbol === "WBNB") {
+         priceValue = parseFloat(pool.token1Price.toSignificant(6));
+      } else {
+        // Tentative de fallback générique sur stablecoins si présents
+        const stables = ["USDT", "USDC", "DAI", "BUSD"];
+        if (stables.includes(pool.token1.symbol)) {
+             priceValue = parseFloat(pool.token0Price.toSignificant(6));
+        } else if (stables.includes(pool.token0.symbol)) {
+             priceValue = parseFloat(pool.token1Price.toSignificant(6));
+        } else {
+             console.warn("⚠️ Pool de paires non supportées pour le calcul du prix (Mode Legacy).");
+             return 0;
+        }
+      }
     }
 
     // Ensure the price is valid
