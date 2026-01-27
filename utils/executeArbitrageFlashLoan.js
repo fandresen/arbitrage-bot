@@ -4,16 +4,20 @@ const axios = require("axios");
 async function executeFlashLoanArbitrage(
   contract,
   { log, sendEmailNotification, sendSlackNotification, parseUnits },
-  loanAmountToken0,
-  loanAmountToken1,
+  loanAmount,
   swap1Params,
   swap2Params,
-  expectedProfit
+  expectedProfit,
 ) {
   log("⚡ Preparing PRIVATE Flash Loan execution via 48 Club...");
 
+  const dodoPoolAddress = "0x107f3be24e3761a91322aa4f5f54d9f18981530c"; // DODO Pool
+  const loanToken = "0x55d398326f99059fF775485246999027B3197955";
+
   try {
-    log(`[Monitor] En attente de la confirmation de la transaction... (Timeout: 2 minutes)`);
+    log(
+      `[Monitor] En attente de la confirmation de la transaction... (Timeout: 2 minutes)`,
+    );
     const signer = contract.runner;
     const address = await signer.getAddress();
 
@@ -24,10 +28,11 @@ async function executeFlashLoanArbitrage(
 
     log("⛽ Estimating gas for the arbitrage transaction...");
     const estimatedGas = await contract.executeArbitrage.estimateGas(
-      loanAmountToken0,
-      loanAmountToken1,
+      dodoPoolAddress,
+      loanToken,
+      loanAmount,
       swap1Params,
-      swap2Params
+      swap2Params,
     );
     log(`   -> Gas estimated: ${estimatedGas.toString()}`);
 
@@ -37,8 +42,9 @@ async function executeFlashLoanArbitrage(
     const tx = {
       to: await contract.getAddress(),
       data: contract.interface.encodeFunctionData("executeArbitrage", [
-        loanAmountToken0,
-        loanAmountToken1,
+        dodoPoolAddress,
+        loanToken,
+        loanAmount,
         swap1Params,
         swap2Params,
       ]),
@@ -55,18 +61,18 @@ async function executeFlashLoanArbitrage(
     console.log("SIGNED TRANSACTION: ", signedTx);
 
     log(`🔒 Sending raw private transaction to 48 Club...`);
-    const { data } = await axios.post(
-      "https://rpc.48.club",
-      {
-        jsonrpc: "2.0",
-        method: "eth_sendRawTransaction",
-        params: [signedTx],
-        id: 1,
-      }
-    );
+    const { data } = await axios.post("https://rpc.48.club", {
+      jsonrpc: "2.0",
+      method: "eth_sendRawTransaction",
+      params: [signedTx],
+      id: 1,
+    });
 
     if (data.error) {
-      sendSlackNotification(`48 Club API Error: ${data.error.message}`,"error");
+      sendSlackNotification(
+        `48 Club API Error: ${data.error.message}`,
+        "error",
+      );
       throw new Error(`48 Club API Error: ${data.error.message}`);
     }
 
@@ -75,7 +81,7 @@ async function executeFlashLoanArbitrage(
 
     sendSlackNotification(
       `Arbitrage TX Sent via 48 Club. Hash: ${txHash}`,
-      "info"
+      "info",
     );
 
     // Wait for confirmation
@@ -83,23 +89,28 @@ async function executeFlashLoanArbitrage(
     const receipt = await signer.provider.waitForTransaction(txHash, 1, 120000); // 1 confirmation, 2 min timeout
 
     if (receipt && receipt.status === 1) {
-        log(`✅ Transaction Confirmed! Profit realized.`);
-        sendEmailNotification(
-            "💰 Arbitrage PROFIT Confirmed!",
-            `Transaction ${txHash} was successful.\n\nExpected Profit: ${expectedProfit.profit.toFixed(4)} USD\nPath: ${expectedProfit.path}`
-        );
-        sendSlackNotification(`💰 Arbitrage PROFIT Confirmed! Hash: ${txHash}`, "success");
+      log(`✅ Transaction Confirmed! Profit realized.`);
+      sendEmailNotification(
+        "💰 Arbitrage PROFIT Confirmed!",
+        `Transaction ${txHash} was successful.\n\nExpected Profit: ${expectedProfit.profit.toFixed(4)} USD\nPath: ${expectedProfit.path}`,
+      );
+      sendSlackNotification(
+        `💰 Arbitrage PROFIT Confirmed! Hash: ${txHash}`,
+        "success",
+      );
     } else {
-        log(`❌ Transaction Reverted or Failed.`);
-        sendSlackNotification(`❌ Arbitrage Transaction Failed/Reverted. Hash: ${txHash}`, "error");
+      log(`❌ Transaction Reverted or Failed.`);
+      sendSlackNotification(
+        `❌ Arbitrage Transaction Failed/Reverted. Hash: ${txHash}`,
+        "error",
+      );
     }
-
   } catch (error) {
     const errorMessage = error?.response?.data?.error?.message || error.message;
     log("❌ Error sending private transaction to 48 Club:", errorMessage);
     sendSlackNotification(
       `❌ Private Arbitrage FAILED. Reason: ${errorMessage}`,
-      "error"
+      "error",
     );
   } finally {
     log("⏹️ End of 48 Club execution attempt.");

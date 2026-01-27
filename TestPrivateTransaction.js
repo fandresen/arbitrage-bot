@@ -42,14 +42,14 @@ async function runLiveTest() {
   const swap1Params = {
     tokenIn: USDT_ADDRESS, // USDT
     tokenOut: WBNB_ADDRESS, // WBNB
-    fee: 500, // 0.05%
+    fee: 100, // 0.05%
     exchange: 1, // Uniswap
     amountOutMin: 0n // Pas de protection de slippage pour ce test
   };
   const swap2Params = {
     tokenIn: WBNB_ADDRESS, // WBNB
     tokenOut: USDT_ADDRESS, // USDT
-    fee: 500, // 0.05%
+    fee: 100, // 0.05%
     exchange: 0, // PancakeSwap
     amountOutMin: 0n
   };
@@ -78,9 +78,9 @@ async function runLiveTest() {
     contract,
     dependencies,
     loanAmountToken0,
-    loanAmountToken1,
     swap1Params,
-    swap2Params
+    swap2Params,
+    {profit:150}
   );
 }
 

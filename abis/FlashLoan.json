@@ -4,26 +4,6 @@
       "inputs": [
         {
           "internalType": "address",
-          "name": "_token0",
-          "type": "address"
-        },
-        {
-          "internalType": "address",
-          "name": "_token1",
-          "type": "address"
-        },
-        {
-          "internalType": "uint24",
-          "name": "_poolFee",
-          "type": "uint24"
-        },
-        {
-          "internalType": "address",
-          "name": "_v3Factory",
-          "type": "address"
-        },
-        {
-          "internalType": "address",
           "name": "_pancakeRouter",
           "type": "address"
         },
@@ -38,27 +18,17 @@
     },
     {
       "inputs": [],
-      "name": "InsufficientFundsToRepay",
-      "type": "error"
-    },
-    {
-      "inputs": [],
       "name": "InvalidExchange",
       "type": "error"
     },
     {
       "inputs": [],
-      "name": "NoAmountBorrowed",
+      "name": "NoProfit",
       "type": "error"
     },
     {
       "inputs": [],
-      "name": "NoFundsToWithdraw",
-      "type": "error"
-    },
-    {
-      "inputs": [],
-      "name": "NoProfitToSend",
+      "name": "NotDodoPool",
       "type": "error"
     },
     {
@@ -67,9 +37,88 @@
       "type": "error"
     },
     {
-      "inputs": [],
-      "name": "NotPool",
-      "type": "error"
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "sender",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "data",
+          "type": "bytes"
+        }
+      ],
+      "name": "DPPFlashLoanCall",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "sender",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "data",
+          "type": "bytes"
+        }
+      ],
+      "name": "DSPFlashLoanCall",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "sender",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "data",
+          "type": "bytes"
+        }
+      ],
+      "name": "DVMFlashLoanCall",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
     },
     {
       "inputs": [],
@@ -98,28 +147,20 @@
       "type": "function"
     },
     {
-      "inputs": [],
-      "name": "V3_FACTORY",
-      "outputs": [
-        {
-          "internalType": "address",
-          "name": "",
-          "type": "address"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
       "inputs": [
         {
-          "internalType": "uint256",
-          "name": "_amount0ToBorrow",
-          "type": "uint256"
+          "internalType": "address",
+          "name": "_flashLoanPool",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "_loanToken",
+          "type": "address"
         },
         {
           "internalType": "uint256",
-          "name": "_amount1ToBorrow",
+          "name": "_loanAmount",
           "type": "uint256"
         },
         {
@@ -151,7 +192,7 @@
             }
           ],
           "internalType": "struct FlashLoan.SwapParams",
-          "name": "_swap1Params",
+          "name": "_swap1",
           "type": "tuple"
         },
         {
@@ -183,7 +224,7 @@
             }
           ],
           "internalType": "struct FlashLoan.SwapParams",
-          "name": "_swap2Params",
+          "name": "_swap2",
           "type": "tuple"
         }
       ],
@@ -208,44 +249,8 @@
     {
       "inputs": [
         {
-          "internalType": "uint256",
-          "name": "fee0",
-          "type": "uint256"
-        },
-        {
-          "internalType": "uint256",
-          "name": "fee1",
-          "type": "uint256"
-        },
-        {
-          "internalType": "bytes",
-          "name": "data",
-          "type": "bytes"
-        }
-      ],
-      "name": "pancakeV3FlashCallback",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [],
-      "name": "pool",
-      "outputs": [
-        {
-          "internalType": "contract IUniswapV3Pool",
-          "name": "",
-          "type": "address"
-        }
-      ],
-      "stateMutability": "view",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
           "internalType": "address",
-          "name": "_tokenAddress",
+          "name": "_token",
           "type": "address"
         }
       ],
@@ -253,10 +258,6 @@
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
-    },
-    {
-      "stateMutability": "payable",
-      "type": "receive"
     }
   ]
 }
