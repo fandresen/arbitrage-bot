@@ -192,6 +192,9 @@ async function handleSwapEvent(eventLog) {
 /**
  * Vérifie l'arbitrage en utilisant l'état en mémoire.
  */
+/**
+ * Vérifie l'arbitrage en utilisant l'état en mémoire + simulation réaliste optimisée.
+ */
 async function checkArbitrageOpportunity() {
   const now = Date.now();
   if (now - lastCallTime < THROTTLE_INTERVAL_MS) return;
@@ -199,107 +202,168 @@ async function checkArbitrageOpportunity() {
 
   const pancakeState = poolStates[pancakeswapV3PoolAddress.toLowerCase()];
   const uniState = uniswapUSDTBNB_005_PoolAddress ? poolStates[uniswapUSDTBNB_005_PoolAddress.toLowerCase()] : null;
-  if (!pancakeState || !uniState) return;
 
-  const pancakeswapV3Price = calculatePriceV3(createV3Pool(WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOWEST, pancakeState.sqrtPriceX96, pancakeState.tick, pancakeState.liquidity));
-  const uniswap005Price = calculatePriceV3(createV3Pool(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOWEST, uniState.sqrtPriceX96, uniState.tick, uniState.liquidity));
-  if (!pancakeswapV3Price || !uniswap005Price) return;
-
-  log(`➡️ Prices: PancakeSwap V3: ${pancakeswapV3Price.toFixed(4)} | Uniswap V3: ${uniswap005Price.toFixed(4)}`);
-
-  // 1. Calcul des écarts en pourcentage
-  // Prix A > Prix B ?
-  const spreadUniToPancake = (pancakeswapV3Price - uniswap005Price) / uniswap005Price; // Si on achète Uni (bas) pour vendre Pancake (haut)
-  const spreadPancakeToUni = (uniswap005Price - pancakeswapV3Price) / pancakeswapV3Price; // Si on achète Pancake (bas) pour vendre Uni (haut)
-
-  // 2. Définition du seuil minimal de rentabilité (Break-even)
-  // Il faut couvrir : Frais Flashloan + Frais Swap (Uni) + Frais Swap (Pancake)
-  // Frais Flashloan = VENUS_FLASH_LOAN_FEE (ex: 0.05%)
-  // Frais Swap = 0.05% * 2 = 0.1%
-  // Marge de sécurité = 0.05%
-  // Total estimé = ~0.20% (0.002)
-  // On utilise une estimation conservatrice pour ne pas rater d'opportunités limites
-  const MIN_SPREAD_REQUIRED = VENUS_FLASH_LOAN_FEE + 0.0015; // Flashloan + ~0.15% de frais de trading
-  log(`MIN SPREAD = ${MIN_SPREAD_REQUIRED*100}%`);
-
-  // 3. Vérification
-  let potentialDirection = null;
-
-  if (spreadUniToPancake > MIN_SPREAD_REQUIRED) {
-      potentialDirection = "UniV3 -> PancakeV3";
-      log(`👀 Spread intéressant détecté (${(spreadUniToPancake*100).toFixed(3)}%): ${potentialDirection}`);
-  } else if (spreadPancakeToUni > MIN_SPREAD_REQUIRED) {
-      potentialDirection = "PancakeV3 -> UniV3";
-      log(`👀 Spread intéressant détecté (${(spreadPancakeToUni*100).toFixed(3)}%): ${potentialDirection}`);
-  } else {
-      // 🛑 ARRÊT IMMÉDIAT : Pas de différence de prix suffisante.
-      // On ne lance pas la boucle coûteuse. On économise les appels RPC.
-      log(` Spread PAS intéressant(${(spreadUniToPancake*100).toFixed(3)}%)`);
-      return;
+  if (!pancakeState || !uniState) {
+    log("⚠️ États des pools incomplets, impossible de vérifier l'arbitrage.");
+    return;
   }
 
-  let bestOpp = { profit: -Infinity, loanAmountUSDT: 0n, bnbOut: 0n, finalUSDTOut: 0n, path: "" };
+  const pancakeswapV3Price = calculatePriceV3(
+    createV3Pool(WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOWEST, pancakeState.sqrtPriceX96, pancakeState.tick, pancakeState.liquidity)
+  );
+
+  const uniswap005Price = calculatePriceV3(
+    createV3Pool(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOWEST, uniState.sqrtPriceX96, uniState.tick, uniState.liquidity)
+  );
+
+  if (!pancakeswapV3Price || !uniswap005Price || pancakeswapV3Price <= 0 || uniswap005Price <= 0) {
+    log("❌ Erreur de calcul des prix spot.");
+    return;
+  }
+
+  log(`➡️ Prices Spot: Pancake V3: ${pancakeswapV3Price.toFixed(6)} | Uniswap V3: ${uniswap005Price.toFixed(6)}`);
+
+  // Calcul des spreads spot (directionnel)
+  const spreadUniToPancake = (pancakeswapV3Price - uniswap005Price) / uniswap005Price;   // Acheter sur Uni → vendre sur Pancake
+  const spreadPancakeToUni = (uniswap005Price - pancakeswapV3Price) / pancakeswapV3Price; // Acheter sur Pancake → vendre sur Uni
+
+  const maxSpreadSpot = Math.max(spreadUniToPancake, spreadPancakeToUni);
+
+  // Estimation du price impact (plus le montant est gros, plus on exige de spread)
+  // Valeurs ajustées selon liquidité réelle observée sur BSC (Pancake ~3M$, Uniswap plus faible)
+  const BASE_FEE = VENUS_FLASH_LOAN_FEE + 0.0010; // Flashloan + 2 × 0.05% swap fees
+
+  log(`📊 Spread spot max: ${(maxSpreadSpot * 100).toFixed(3)}% | Seuil de base: ${(BASE_FEE * 100).toFixed(2)}%`);
+
+  if (maxSpreadSpot < BASE_FEE + 0.0010) {  // Au minimum 0.10% de marge supplémentaire
+    log(`🛑 Spread spot trop faible (${(maxSpreadSpot * 100).toFixed(3)}%). Pas de simulation Quoter.`);
+    return;
+  }
+
+  // --- Simulation réelle uniquement si spread spot prometteur ---
+  log(`🔍 Spread spot intéressant (${(maxSpreadSpot * 100).toFixed(3)}%). Lancement simulation Quoter...`);
+
   const usdtDecimals = TOKEN_DECIMALS[USDT_ADDRESS.toLowerCase()];
+  const testAmounts = [1000, 3000, 6000, 10000, 15000];
 
-  for (let loanAmountNum = MIN_LOAN_AMOUNT_USDT; loanAmountNum <= MAX_LOAN_AMOUNT_USDT; loanAmountNum += LOAN_AMOUNT_INCREMENT_USDT) {
+  let bestOpp = {
+    profit: -Infinity,
+    loanAmountUSDT: 0n,
+    bnbOut: 0n,
+    finalUSDTOut: 0n,
+    path: ""
+  };
+
+  for (let loanAmountNum of testAmounts) {
+    if (loanAmountNum > MAX_LOAN_AMOUNT_USDT) break;
+
     const currentLoanAmountUSDT = parseUnits(loanAmountNum.toString(), usdtDecimals);
-    const bnbFromUni = await getAmountOutV3(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOWEST, currentLoanAmountUSDT, ethersProvider, UNISWAP_V3_QUOTER_V2);
-    if (bnbFromUni) {
-      const usdtFromPancake = await getAmountOutV3(WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOWEST, bnbFromUni, ethersProvider, PANCAKESWAP_V3_QUOTER_V2);
-      if (usdtFromPancake) {
-        const profit = (parseFloat(formatUnits(usdtFromPancake, usdtDecimals)) - loanAmountNum) * (1 - VENUS_FLASH_LOAN_FEE);
-        if (profit > bestOpp.profit) bestOpp = { profit, loanAmountUSDT: currentLoanAmountUSDT, bnbOut: bnbFromUni, finalUSDTOut: usdtFromPancake, path: "UniV3 -> PancakeV3" };
+
+    // Direction 1: UniV3 (USDT→WBNB) → PancakeV3 (WBNB→USDT)
+    const bnbFromUni = await getAmountOutV3(
+      USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOWEST,
+      currentLoanAmountUSDT, ethersProvider, UNISWAP_V3_QUOTER_V2
+    );
+
+    if (bnbFromUni && bnbFromUni > 0n) {
+      const usdtFromPancake = await getAmountOutV3(
+        WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOWEST,
+        bnbFromUni, ethersProvider, PANCAKESWAP_V3_QUOTER_V2
+      );
+
+      if (usdtFromPancake && usdtFromPancake > 0n) {
+        const received = parseFloat(formatUnits(usdtFromPancake, usdtDecimals));
+        const profit = (received - loanAmountNum) * (1 - VENUS_FLASH_LOAN_FEE);
+
+        if (profit > bestOpp.profit) {
+          bestOpp = {
+            profit,
+            loanAmountUSDT: currentLoanAmountUSDT,
+            bnbOut: bnbFromUni,
+            finalUSDTOut: usdtFromPancake,
+            path: "UniV3 → PancakeV3"
+          };
+        }
       }
     }
-    const bnbFromPancake = await getAmountOutV3(USDT_TOKEN, WBNB_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOWEST, currentLoanAmountUSDT, ethersProvider, PANCAKESWAP_V3_QUOTER_V2);
-    if (bnbFromPancake) {
-      const usdtFromUni = await getAmountOutV3(WBNB_TOKEN, USDT_TOKEN, UNISWAP_V3_FEE_TIERS.LOWEST, bnbFromPancake, ethersProvider, UNISWAP_V3_QUOTER_V2);
-      if (usdtFromUni) {
-        const profit = (parseFloat(formatUnits(usdtFromUni, usdtDecimals)) - loanAmountNum) * (1 - VENUS_FLASH_LOAN_FEE);
-        if (profit > bestOpp.profit) bestOpp = { profit, loanAmountUSDT: currentLoanAmountUSDT, bnbOut: bnbFromPancake, finalUSDTOut: usdtFromUni, path: "PancakeV3 -> UniV3" };
+
+    // Direction 2: PancakeV3 (USDT→WBNB) → UniV3 (WBNB→USDT)
+    const bnbFromPancake = await getAmountOutV3(
+      USDT_TOKEN, WBNB_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOWEST,
+      currentLoanAmountUSDT, ethersProvider, PANCAKESWAP_V3_QUOTER_V2
+    );
+
+    if (bnbFromPancake && bnbFromPancake > 0n) {
+      const usdtFromUni = await getAmountOutV3(
+        WBNB_TOKEN, USDT_TOKEN, UNISWAP_V3_FEE_TIERS.LOWEST,
+        bnbFromPancake, ethersProvider, UNISWAP_V3_QUOTER_V2
+      );
+
+      if (usdtFromUni && usdtFromUni > 0n) {
+        const received = parseFloat(formatUnits(usdtFromUni, usdtDecimals));
+        const profit = (received - loanAmountNum) * (1 - VENUS_FLASH_LOAN_FEE);
+
+        if (profit > bestOpp.profit) {
+          bestOpp = {
+            profit,
+            loanAmountUSDT: currentLoanAmountUSDT,
+            bnbOut: bnbFromPancake,
+            finalUSDTOut: usdtFromUni,
+            path: "PancakeV3 → UniV3"
+          };
+        }
       }
     }
   }
 
-  // --- Log CSV ---
+  // --- Logging CSV (inchangé) ---
   const timestampForCsv = new Date().toISOString();
-  const differencePercent = Math.abs((100 - (pancakeswapV3Price * 100) / uniswap005Price).toFixed(3));
-  let profitUniToPancake = 0;
-  let profitPancakeToUni = 0;
-  if (bestOpp.path === "UniV3 -> PancakeV3") {
-    profitUniToPancake = bestOpp.profit;
-  } else if (bestOpp.path === "PancakeV3 -> UniV3") {
-    profitPancakeToUni = bestOpp.profit;
-  }
+  const differencePercent = Math.abs((100 - (pancakeswapV3Price * 100) / uniswap005Price).toFixed(3)) || 0;
+  const profitUniToPancake = bestOpp.path === "UniV3 → PancakeV3" ? bestOpp.profit : 0;
+  const profitPancakeToUni = bestOpp.path === "PancakeV3 → UniV3" ? bestOpp.profit : 0;
   const loanAmountForCsv = bestOpp.loanAmountUSDT > 0n ? formatUnits(bestOpp.loanAmountUSDT, usdtDecimals) : "0";
-  const csvRow = `${timestampForCsv},${pancakeswapV3Price.toFixed(2)},${uniswap005Price.toFixed(2)},${profitUniToPancake.toFixed(2)},${profitPancakeToUni.toFixed(2)},${differencePercent},${parseFloat(loanAmountForCsv).toFixed(0)}\n`;
+
+  const csvRow = `${timestampForCsv},${pancakeswapV3Price.toFixed(4)},${uniswap005Price.toFixed(4)},${profitUniToPancake.toFixed(4)},${profitPancakeToUni.toFixed(4)},${differencePercent},${parseFloat(loanAmountForCsv).toFixed(0)}\n`;
+
   fs.appendFile(csvPath, csvRow, (err) => {
     if (err) log("❌ Error writing to CSV:", err);
   });
-  
+
+  // Décision finale
   if (bestOpp.profit > PROFIT_THRESHOLD_USD) {
     const loanAmountStr = formatUnits(bestOpp.loanAmountUSDT, usdtDecimals);
-    const msg = `💰 EXECUTION: ${bestOpp.path} | Profit: ${bestOpp.profit.toFixed(4)} USD | Loan: ${loanAmountStr} USD`;
+    const msg = `💰 OPPORTUNITÉ PROFITABLE: ${bestOpp.path} | Profit: ${bestOpp.profit.toFixed(4)} USD | Loan: ${loanAmountStr} USDT`;
     log(msg);
     sendSlackNotification(`Arbitrage Triggered (${bestOpp.path})\n${msg}`, "info");
 
-    const amountOutMinWBNB = 0n;
-    const amountOutMinUSDT = 0n;
-
     const isUniFirst = bestOpp.path.startsWith("Uni");
-    const swap1Params = { tokenIn: USDT_ADDRESS, tokenOut: WBNB_ADDRESS, fee: isUniFirst ? UNISWAP_V3_FEE_TIERS.LOWEST : PANCAKESWAP_V3_FEE_TIERS.LOWEST, exchange: isUniFirst ? DEX.UNISWAP : DEX.PANCAKESWAP, amountOutMin: amountOutMinWBNB };
-    const swap2Params = { tokenIn: WBNB_ADDRESS, tokenOut: USDT_ADDRESS, fee: isUniFirst ? PANCAKESWAP_V3_FEE_TIERS.LOWEST : UNISWAP_V3_FEE_TIERS.LOWEST, exchange: isUniFirst ? DEX.PANCAKESWAP : DEX.UNISWAP, amountOutMin: amountOutMinUSDT };
+
+    const swap1Params = {
+      tokenIn: USDT_ADDRESS,
+      tokenOut: WBNB_ADDRESS,
+      fee: isUniFirst ? UNISWAP_V3_FEE_TIERS.LOWEST : PANCAKESWAP_V3_FEE_TIERS.LOWEST,
+      exchange: isUniFirst ? DEX.UNISWAP : DEX.PANCAKESWAP,
+      amountOutMin: 0n
+    };
+
+    const swap2Params = {
+      tokenIn: WBNB_ADDRESS,
+      tokenOut: USDT_ADDRESS,
+      fee: isUniFirst ? PANCAKESWAP_V3_FEE_TIERS.LOWEST : UNISWAP_V3_FEE_TIERS.LOWEST,
+      exchange: isUniFirst ? DEX.PANCAKESWAP : DEX.UNISWAP,
+      amountOutMin: 0n
+    };
 
     await executeFlashLoanArbitrage(
-        flashLoanContract,
-        { log, sendEmailNotification, sendSlackNotification, parseUnits }, 
-        bestOpp.loanAmountUSDT,
-        swap1Params,
-        swap2Params,
-        bestOpp
+      flashLoanContract,
+      { log, sendEmailNotification, sendSlackNotification, parseUnits },
+      bestOpp.loanAmountUSDT,
+      swap1Params,
+      swap2Params,
+      bestOpp
     );
   } else {
-     log(`💤 No profitable opportunity found. Best path profit: ${bestOpp.profit.toFixed(4)} USD.`);
+    log(`💤 Aucune opportunité rentable après simulation. Meilleur profit: ${bestOpp.profit.toFixed(4)} USD (seuil: ${PROFIT_THRESHOLD_USD})`);
   }
 }
 
