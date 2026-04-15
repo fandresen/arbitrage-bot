@@ -9,14 +9,14 @@ const TOKEN_DECIMALS = {
 };
 
 //Adress du contrat déployé
-const FLASH_LOAN_CONTRACT_ADDRESS = "0x1Fa2419E56698d5D3D1Bf79Df996Ef048B8a60d5";
+const FLASH_LOAN_CONTRACT_ADDRESS =
+  "0x1Fa2419E56698d5D3D1Bf79Df996Ef048B8a60d5";
 
 const PANCAKESWAP_V3_QUOTER_V2 = "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997";
 
 const UNISWAP_V3_ROUTER = "0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2";
 const UNISWAP_V3_QUOTER_V2 = "0x78D78E420Da98ad378D7799bE8f4AF69033EB077"; // Quoter V2 pour Uniswap V3
 const UNISWAP_V3_FACTORY = "0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7";
-
 
 // Adresses PancakeSwap V3
 const PANCAKESWAP_V3_FACTORY = "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865";
@@ -38,44 +38,41 @@ const UNISWAP_V3_FEE_TIERS = {
   HIGH: 10000, // 1.00%
 };
 
-
 const RPC_ENDPOINTS = [
-  {
-    name: "Chainstack RPC",
-    http: "https://bsc-mainnet.core.chainstack.com/609717acc329b17e29745c0317ccf0",
-    ws:   "wss://bsc-mainnet.core.chainstack.com/609717acc329b17e29745c0317ccf0",                         // certains drpc supportent WS
-    priority: 3
-  },
   {
     name: "Fandresena Alchemy RPC",
     http: "https://bnb-mainnet.g.alchemy.com/v2/V32WNKvP7Geb6Oh9Zl8Sq41Zd3ciglTe",
-    ws:   "wss://bnb-mainnet.g.alchemy.com/v2/V32WNKvP7Geb6Oh9Zl8Sq41Zd3ciglTe",
-    priority: 2
+    ws: "wss://bnb-mainnet.g.alchemy.com/v2/V32WNKvP7Geb6Oh9Zl8Sq41Zd3ciglTe",
+    priority: 2,
   },
   {
-    name:"GetBlock RPC",
-    http:"https://go.getblock.us/6cce03c521d64f2e8fdd93cc6b7cb25a",
-    ws:"wss://go.getblock.us/d4e31013c632424183997fef89762cdf",
-    priority: 5
+    name: "GetBlock RPC",
+    http: "https://go.getblock.us/6cce03c521d64f2e8fdd93cc6b7cb25a",
+    ws: "wss://go.getblock.us/d4e31013c632424183997fef89762cdf",
+    priority: 5,
   },
   {
     name: "Eliot Alchemy RPC",
-    http: "https://bnb-mainnet.g.alchemy.com/v2/14Gw9w9XdifwLSUg_JPKj",                    // ← change avec ton vrai endpoint
-    ws:   "wss://bnb-mainnet.g.alchemy.com/v2/14Gw9w9XdifwLSUg_JPKj",                  // ← si le provider supporte WS
-    priority: 2
+    http: "https://bnb-mainnet.g.alchemy.com/v2/14Gw9w9XdifwLSUg_JPKj", // ← change avec ton vrai endpoint
+    ws: "wss://bnb-mainnet.g.alchemy.com/v2/14Gw9w9XdifwLSUg_JPKj", // ← si le provider supporte WS
+    priority: 2,
   },
   {
-    name:"NodeReal RPC",
-    http:"https://bsc-mainnet.nodereal.io/v1/f8d0a3bdcbef47388cd3777086e0e4b5",
-    ws:"wss://bsc-mainnet.nodereal.io/ws/v1/f8d0a3bdcbef47388cd3777086e0e4b5",
-    priority: 1
+    name: "NodeReal RPC",
+    http: "https://bsc-mainnet.nodereal.io/v1/f8d0a3bdcbef47388cd3777086e0e4b5",
+    ws: "wss://bsc-mainnet.nodereal.io/ws/v1/f8d0a3bdcbef47388cd3777086e0e4b5",
+    priority: 1,
   },
-  
+  {
+    name: "Chainstack RPC",
+    http: "https://bsc-mainnet.core.chainstack.com/609717acc329b17e29745c0317ccf0ef",
+    ws: "wss://bsc-mainnet.core.chainstack.com/609717acc329b17e29745c0317ccf0ef", // certains drpc supportent WS
+    priority: 3,
+  },
 ];
 
-
 // Frais flashloan = 0.001%
-const FLASH_LOAN_FEE = 0.000;
+const FLASH_LOAN_FEE = 0.0;
 
 // Montants de prêt pour la simulation
 const MIN_LOAN_AMOUNT_USDT = 1000;
@@ -84,7 +81,6 @@ const LOAN_AMOUNT_INCREMENT_USDT = 5000;
 
 // Seuil de profit net minimum en USD pour déclencher l'alerte
 const PROFIT_THRESHOLD_USD = 5;
-
 
 // const SLIPPAGE_TOLERANCE = 0.005; // 0.5% de tolérance au slippage
 
@@ -125,5 +121,5 @@ module.exports = {
   FLASH_LOAN_CONTRACT_ADDRESS,
   SLACK_WEBHOOK_URL,
 
-  RPC_ENDPOINTS
+  RPC_ENDPOINTS,
 };
