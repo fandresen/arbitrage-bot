@@ -40,7 +40,7 @@ async function getAmountOutV3(
     };
 
     // Utilisation recommandée : .callStatic
-    const result = await quoterContract.callStatic.quoteExactInputSingle(params);
+    const result = await quoterContract.quoteExactInputSingle.staticCall(params);
 
     // result est un tuple : [amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate]
     return result[0];   // amountOut
