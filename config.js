@@ -39,6 +39,41 @@ const UNISWAP_V3_FEE_TIERS = {
 };
 
 
+const RPC_ENDPOINTS = [
+  {
+    name: "Chainstack RPC",
+    http: "https://bsc-mainnet.core.chainstack.com/609717acc329b17e29745c0317ccf0",
+    ws:   "wss://bsc-mainnet.core.chainstack.com/609717acc329b17e29745c0317ccf0",                         // certains drpc supportent WS
+    priority: 3
+  },
+  {
+    name: "Fandresena Alchemy RPC",
+    http: "https://bnb-mainnet.g.alchemy.com/v2/V32WNKvP7Geb6Oh9Zl8Sq41Zd3ciglTe",
+    ws:   "wss://bnb-mainnet.g.alchemy.com/v2/V32WNKvP7Geb6Oh9Zl8Sq41Zd3ciglTe",
+    priority: 2
+  },
+  {
+    name:"GetBlock RPC",
+    http:"https://go.getblock.us/6cce03c521d64f2e8fdd93cc6b7cb25a",
+    ws:"wss://go.getblock.us/d4e31013c632424183997fef89762cdf",
+    priority: 5
+  },
+  {
+    name: "Eliot Alchemy RPC",
+    http: "https://bnb-mainnet.g.alchemy.com/v2/14Gw9w9XdifwLSUg_JPKj",                    // ← change avec ton vrai endpoint
+    ws:   "wss://bnb-mainnet.g.alchemy.com/v2/14Gw9w9XdifwLSUg_JPKj",                  // ← si le provider supporte WS
+    priority: 2
+  },
+  {
+    name:"NodeReal RPC",
+    http:"https://bsc-mainnet.nodereal.io/v1/f8d0a3bdcbef47388cd3777086e0e4b5",
+    ws:"wss://bsc-mainnet.nodereal.io/ws/v1/f8d0a3bdcbef47388cd3777086e0e4b5",
+    priority: 1
+  },
+  
+];
+
+
 // Frais flashloan = 0.001%
 const FLASH_LOAN_FEE = 0.000;
 
@@ -88,5 +123,7 @@ module.exports = {
   PANCAKESWAP_V3_QUOTER_V2,
   // SLIPPAGE_TOLERANCE,
   FLASH_LOAN_CONTRACT_ADDRESS,
-  SLACK_WEBHOOK_URL
+  SLACK_WEBHOOK_URL,
+
+  RPC_ENDPOINTS
 };

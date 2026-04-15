@@ -1,28 +1,15 @@
 // utils/calculations.js
 const { parseUnits, formatUnits } = require("ethers");
-const ethers = require("ethers"); // Import the full ethers object
-const { Trade, Route, SwapQuoter } = require("@uniswap/v3-sdk"); // Importez les nécessaires
-const { Token, CurrencyAmount, TradeType } = require("@uniswap/sdk-core"); // Importez les nécessaires
-const { PANCAKESWAP_V3_QUOTER_V2 } = require("../config");
+const ethers = require("ethers");
 
-const IUniswapV3PoolABI =
-  require("@uniswap/v3-core/artifacts/contracts/interfaces/IUniswapV3Pool.sol/IUniswapV3Pool.json").abi;
-const ISwapRouterABI =
-  require("@uniswap/v3-periphery/artifacts/contracts/interfaces/ISwapRouter.sol/ISwapRouter.json").abi;
+// Import rpcManager et log depuis le scope principal (on les passe en paramètre ou on les importe)
+const rpcManager = require("./rpcManager");   // ← Ajoute cet import
 
-// Define a minimal ABI for the specific function causing issues
+// ABI minimal pour quoteExactInputSingle (Quoter V2)
 const QUOTER_V2_SINGLE_QUOTE_ABI = require("../abis/pancakeSwapQuoter.json");
-const { sendSlackNotification } = require("./slackNotifier");
 
 /**
  * Récupère le montant de sortie estimé pour un swap V3.
- * @param {Token} tokenIn - L'instance du token d'entrée.
- * @param {Token} tokenOut - L'instance du token de sortie.
- * @param {number} fee - Le niveau de frais de la pool (ex: 500 pour 0.05%).
- * @param {BigInt} amountIn - Le montant d'entrée (en BigInt).
- * @param {object} provider - Instance d'ethers.js Provider.
- * @param {string} quoterAddress - L'adresse du contrat Quoter V2 (PancakeSwap ou Uniswap).
- * @returns {Promise<BigInt|null>} Le montant de sortie estimé en BigInt, ou null en cas d'erreur.
  */
 async function getAmountOutV3(
   tokenIn,
@@ -33,11 +20,8 @@ async function getAmountOutV3(
   quoterAddress
 ) {
   try {
-    // Valider si amountIn est un BigInt et est positif
     if (typeof amountIn !== "bigint" || amountIn <= 0n) {
-      console.warn(
-        `⚠️ getAmountOutV3: amountIn invalide ou non positif. Reçu: ${amountIn}`
-      );
+      console.warn(`⚠️ getAmountOutV3: amountIn invalide → ${amountIn}`);
       return null;
     }
 
@@ -47,73 +31,75 @@ async function getAmountOutV3(
       provider
     );
 
-    // Pour quoteExactInputSingle, sqrtPriceLimitX96 peut être 0 pour pas de limite inférieure
-    // ou Math.sqrt(MAX_UINT256) pour pas de limite supérieure, selon le sens du swap.
-    // Utiliser 0 pour une limite minimale permet de trouver n'importe quel prix tant que la liquidité existe.
-    const [amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate] =
-      await quoterContract.quoteExactInputSingle.staticCall({
-        tokenIn: tokenIn.address,
-        tokenOut: tokenOut.address,
-        fee: fee,
-        amountIn: amountIn,
-        sqrtPriceLimitX96: 0,
-      });
+    const params = {
+      tokenIn: tokenIn.address,
+      tokenOut: tokenOut.address,
+      fee: fee,
+      amountIn: amountIn,
+      sqrtPriceLimitX96: 0n,   // 0 = pas de limite (standard pour les quotes)
+    };
 
-    return amountOut;
+    // Utilisation recommandée : .callStatic
+    const result = await quoterContract.callStatic.quoteExactInputSingle(params);
+
+    // result est un tuple : [amountOut, sqrtPriceX96After, initializedTicksCrossed, gasEstimate]
+    return result[0];   // amountOut
+
   } catch (err) {
-    if (err.code === "CALL_EXCEPTION") {
-      console.error(
-        `❌ Erreur getAmountOutV3 (${quoterAddress}) pour ${formatUnits(
-          amountIn,
-          tokenIn.decimals
-        )} ${tokenIn.symbol} (Frais: ${fee / 100}%): CALL_EXCEPTION - ${
-          err.message
-        }. Cela peut indiquer une liquidité insuffisante pour le montant demandé ou un slippage trop élevé.`
-      );
-    } else {
-      console.error(
-        `❌ Erreur getAmountOutV3 (${quoterAddress}):`,
-        err.message
-      );
-      sendSlackNotification(
-        `❌ Erreur getAmountOutV3 (${quoterAddress}): ${err.message}`,"error"
-        
-      );
+    const errorMsg = err.message || err.toString();
+
+    // Rate limit → switch RPC (unifié)
+    if (rpcManager.isRateLimitError && rpcManager.isRateLimitError(err)) {
+      console.log(`🚨 Rate limit détecté sur Quoter (${quoterAddress}) → Switch RPC`);
+      rpcManager.switchToNextRpc();
+      return null;
     }
+
+    // Erreur courante : liquidité insuffisante pour le montant testé
+    if (err.code === "CALL_EXCEPTION" || errorMsg.includes("revert") || errorMsg.includes("Unexpected error")) {
+      // Log silencieux pour les gros montants (fréquent sur Uniswap qui a moins de liquidité)
+      if (amountIn > 5000n * 10n ** 18n) {  // > 5000 USDT
+        console.warn(`⚠️ Quoter CALL_EXCEPTION (liquidité faible?) pour ${formatUnits(amountIn, tokenIn.decimals)} ${tokenIn.symbol}`);
+      } else {
+        console.error(`❌ Quoter error (${quoterAddress}): CALL_EXCEPTION - ${errorMsg}`);
+      }
+    } else {
+      console.error(`❌ Erreur inattendue getAmountOutV3:`, errorMsg);
+    }
+
     return null;
   }
 }
 
 /**
- * Calcule le prix d'un token par rapport à un autre dans une pool V3.
- * @param {Pool} pool - L'instance de la pool V3.
- * @returns {number} Le prix du token1 par rapport au token0 (USDT par WBNB).
+ * Calcule le prix spot à partir d'une Pool @uniswap/v3-sdk
  */
 function calculatePriceV3(pool) {
   try {
+    if (!pool || !pool.token0 || !pool.token1) {
+      console.warn("⚠️ Pool invalide pour calculatePriceV3");
+      return 0;
+    }
+
     let priceValue = 0;
 
-    // Determine the USDT/WBNB price based on token order in the pool
     if (pool.token0.symbol === "WBNB" && pool.token1.symbol === "USDT") {
       priceValue = parseFloat(pool.token0Price.toSignificant(6));
     } else if (pool.token0.symbol === "USDT" && pool.token1.symbol === "WBNB") {
       priceValue = parseFloat(pool.token1Price.toSignificant(6));
     } else {
-      console.warn("⚠️ Pool de paires non supportées pour le calcul du prix.");
+      console.warn(`⚠️ Tokens non supportés dans la pool: ${pool.token0.symbol}/${pool.token1.symbol}`);
       return 0;
     }
 
-    // Ensure the price is valid
-    if (isNaN(priceValue) || !isFinite(priceValue)) {
-      console.error(
-        "❌ Erreur de calcul du prix V3: Le prix résultant n'est pas un nombre valide."
-      );
+    if (isNaN(priceValue) || !isFinite(priceValue) || priceValue <= 0) {
+      console.error("❌ Prix calculé invalide dans calculatePriceV3");
       return 0;
     }
 
     return priceValue;
   } catch (err) {
-    console.error("❌ Erreur lors du calcul du prix V3:", err.message);
+    console.error("❌ Erreur calculatePriceV3:", err.message);
     return 0;
   }
 }

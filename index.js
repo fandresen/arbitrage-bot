@@ -6,6 +6,10 @@ const { Web3 } = require("web3");
 const { parseUnits, formatUnits, JsonRpcProvider, ethers } = require("ethers");
 const { Token } = require("@uniswap/sdk-core");
 
+const rpcManager = require("./utils/rpcManager");
+global.stopBot = stopBot;
+global.startBot = startBot;
+
 // Import de la configuration
 const config = require("./config");
 const {
@@ -15,29 +19,36 @@ const {
   PROFIT_THRESHOLD_USD,
   VENUS_FLASH_LOAN_FEE,
   MAX_LOAN_AMOUNT_USDT,
-  LOAN_AMOUNT_INCREMENT_USDT,
-  MIN_LOAN_AMOUNT_USDT,
   PANCAKESWAP_V3_FACTORY,
   PANCAKESWAP_V3_FEE_TIERS,
   PANCAKESWAP_V3_QUOTER_V2,
   UNISWAP_V3_FACTORY,
   UNISWAP_V3_QUOTER_V2,
+  RPC_ENDPOINTS,
   UNISWAP_V3_FEE_TIERS,
   FLASH_LOAN_CONTRACT_ADDRESS,
 } = config;
 
 // Import des utilitaires et ABIs
-const { getV3PoolAddress, getV3PoolState, createV3Pool } = require("./utils/v3contracts");
+const {
+  getV3PoolAddress,
+  getV3PoolState,
+  createV3Pool,
+} = require("./utils/v3contracts");
 const { getAmountOutV3, calculatePriceV3 } = require("./utils/calculations");
 const { sendEmailNotification } = require("./utils/notifications");
 const { sendSlackNotification } = require("./utils/slackNotifier");
 const FlashLoanABI = require("./abis/FlashLoan.json").abi;
-const { executeFlashLoanArbitrage } = require("./utils/executeArbitrageFlashLoan");
+const {
+  executeFlashLoanArbitrage,
+} = require("./utils/executeArbitrageFlashLoan");
 
 // --- Configuration et Variables Globales ---
 let signer;
 const flashLoanContractAddress = FLASH_LOAN_CONTRACT_ADDRESS;
 let flashLoanContract;
+
+let restartTimer = null;
 
 const DEX = { PANCAKESWAP: 0, UNISWAP: 1 };
 
@@ -67,8 +78,20 @@ let pancakeswapV3PoolAddress = "";
 let uniswapUSDTBNB_005_PoolAddress = null;
 
 // Instances de Token
-const WBNB_TOKEN = new Token(56, WBNB_ADDRESS, TOKEN_DECIMALS[WBNB_ADDRESS.toLowerCase()], "WBNB", "Wrapped BNB");
-const USDT_TOKEN = new Token(56, USDT_ADDRESS, TOKEN_DECIMALS[USDT_ADDRESS.toLowerCase()], "USDT", "Tether USD");
+const WBNB_TOKEN = new Token(
+  56,
+  WBNB_ADDRESS,
+  TOKEN_DECIMALS[WBNB_ADDRESS.toLowerCase()],
+  "WBNB",
+  "Wrapped BNB",
+);
+const USDT_TOKEN = new Token(
+  56,
+  USDT_ADDRESS,
+  TOKEN_DECIMALS[USDT_ADDRESS.toLowerCase()],
+  "USDT",
+  "Tether USD",
+);
 
 // Configuration des Logs CSV
 const logDir = path.join(__dirname, "LOG");
@@ -78,7 +101,7 @@ if (!fs.existsSync(csvPath)) {
   fs.writeFileSync(
     csvPath,
     "timestamp,pancakeV3Price,uniswap005Price,profit_Uni_to_Pancake,profit_Pancake_to_Uni,difference_percent,loan_amount_usd\n",
-    "utf8"
+    "utf8",
   );
 }
 
@@ -101,9 +124,14 @@ function cleanupSubscriptions() {
   ];
   subscriptions.forEach(({ sub, name }) => {
     if (sub) {
-      sub.unsubscribe().then(success => {
-        if (success) log(`✅ Unsubscribed from ${name} logs.`);
-      }).catch(err => console.error(`❌ Error unsubscribing from ${name}:`, err));
+      sub
+        .unsubscribe()
+        .then((success) => {
+          if (success) log(`✅ Unsubscribed from ${name} logs.`);
+        })
+        .catch((err) =>
+          console.error(`❌ Error unsubscribing from ${name}:`, err),
+        );
     }
   });
   subscriptionPancakeV3 = null;
@@ -111,37 +139,60 @@ function cleanupSubscriptions() {
 }
 
 /**
- * Initialise les fournisseurs et gère la reconnexion.
+ * Initialise les fournisseurs et gère la reconnexion avec failover RPC.
  */
+
 function initializeProvidersAndSubscriptions() {
-  if (!process.env.WS_RPC_URL || !process.env.HTTP_RPC_URL) {
-    throw new Error("WS_RPC_URL or HTTP_RPC_URL not defined in .env file.");
+  if (!config.RPC_ENDPOINTS || config.RPC_ENDPOINTS.length === 0) {
+    throw new Error("❌ Aucun RPC_ENDPOINTS défini dans config.js");
   }
-  ethersProvider = new JsonRpcProvider(process.env.HTTP_RPC_URL);
+
+  rpcManager.initRpcList(config.RPC_ENDPOINTS);
+
+  // HTTP Provider (ethers)
+  ethersProvider = rpcManager.createHttpProvider();
 
   if (!process.env.PRIVATE_KEY) {
     throw new Error("PRIVATE_KEY not defined in .env file.");
   }
   signer = new ethers.Wallet(process.env.PRIVATE_KEY, ethersProvider);
-  flashLoanContract = new ethers.Contract(flashLoanContractAddress, FlashLoanABI, signer);
-  log(`✅ Signer and Contract initialized for address: ${signer.address}`);
+  flashLoanContract = new ethers.Contract(
+    flashLoanContractAddress,
+    FlashLoanABI,
+    signer,
+  );
+  log(
+    `✅ Signer & Contract initialized on RPC: ${rpcManager.getCurrentRpc().name}`,
+  );
 
+  // WebSocket Provider (web3)
   if (web3 && web3.currentProvider && web3.currentProvider.connected) {
-    log("Web3 WebSocketProvider is already connected.");
+    log("Web3 WebSocket déjà connecté.");
     return;
   }
-  web3 = new Web3(new Web3.providers.WebsocketProvider(process.env.WS_RPC_URL));
+
+  web3 = new Web3(rpcManager.createWsProvider());
 
   web3.currentProvider.on("end", (event) => {
-    log(`🔴 WebSocket disconnected. Code: ${event.code}, Reason: ${event.reason}. Attempting to reconnect...`);
-    stopBot(); // Utilise stopBot pour un nettoyage complet
-    setTimeout(() => {
-      log("Re-initializing providers and restarting bot...");
-      startBot();
-    }, 5000);
+    log(
+      `🔴 WebSocket disconnected (code: ${event.code}). Tentative de switch RPC...`,
+    );
+    rpcManager.switchToNextRpc();
   });
-  web3.currentProvider.on("error", (error) => log("❌ WebSocket Error:", error.message));
-  log(`✅ WebSocket connected to ${process.env.WS_RPC_URL}`);
+
+  web3.currentProvider.on("error", (error) => {
+    log(`❌ WebSocket Error: ${error.message}`);
+
+    if (rpcManager.isRateLimitError(error)) {
+      log("🚨 Rate limit détecté sur WS → Switch RPC");
+    } else {
+      log("🚨 Erreur WebSocket → Switch RPC");
+    }
+
+    rpcManager.switchToNextRpc();
+  });
+
+  log(`✅ WebSocket connecté → ${rpcManager.getCurrentRpc().name}`);
 }
 
 /**
@@ -149,22 +200,53 @@ function initializeProvidersAndSubscriptions() {
  */
 async function loadPoolsAndInitialStates() {
   log("Loading pools and their initial states...");
-  const loadPool = async (name, factory, tokenA, tokenB, fee) => {
-    const address = await getV3PoolAddress(factory, tokenA, tokenB, fee, ethersProvider);
-    if (!address) throw new Error(`❌ ${name} pool not found.`);
-    log(`✅ ${name} Pool Found: ${address}`);
-    const initialState = await getV3PoolState(address, ethersProvider);
-    if (!initialState) throw new Error(`❌ Failed to fetch initial state for ${name}.`);
-    poolStates[address.toLowerCase()] = initialState;
-    log(`✅ Initial state for ${name} loaded. Tick: ${initialState.tick}`);
-    return address;
+  const loadPool = async (name, factory, tokenA, tokenB, fee, retries = 2) => {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const address = await getV3PoolAddress(
+          factory,
+          tokenA,
+          tokenB,
+          fee,
+          ethersProvider,
+        );
+        if (!address) throw new Error(`❌ ${name} pool not found.`);
+        log(`✅ ${name} Pool Found: ${address}`);
+        const initialState = await getV3PoolState(address, ethersProvider);
+        if (!initialState)
+          throw new Error(`❌ Failed to fetch initial state for ${name}.`);
+        poolStates[address.toLowerCase()] = initialState;
+        log(`✅ Initial state for ${name} loaded. Tick: ${initialState.tick}`);
+        return address;
+      } catch (e) {
+        log(
+          `⚠️ Tentative ${attempt}/${retries} échouée pour ${name}: ${e.message}`,
+        );
+        if (attempt === retries) throw e;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
   };
 
-  pancakeswapV3PoolAddress = await loadPool("PancakeSwap V3", PANCAKESWAP_V3_FACTORY, WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOWEST);
+  pancakeswapV3PoolAddress = await loadPool(
+    "PancakeSwap V3",
+    PANCAKESWAP_V3_FACTORY,
+    WBNB_TOKEN,
+    USDT_TOKEN,
+    PANCAKESWAP_V3_FEE_TIERS.LOWEST,
+  );
   try {
-    uniswapUSDTBNB_005_PoolAddress = await loadPool("Uniswap V3 0.05%", UNISWAP_V3_FACTORY, USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOWEST);
+    uniswapUSDTBNB_005_PoolAddress = await loadPool(
+      "Uniswap V3 0.05%",
+      UNISWAP_V3_FACTORY,
+      USDT_TOKEN,
+      WBNB_TOKEN,
+      UNISWAP_V3_FEE_TIERS.LOWEST,
+    );
   } catch (e) {
-    log(`⚠️ Could not load Uniswap V3 pool. Bot will run with limited capacity. Error: ${e.message}`);
+    log(
+      `⚠️ Could not load Uniswap V3 pool. Bot will run with limited capacity. Error: ${e.message}`,
+    );
   }
 }
 
@@ -177,7 +259,11 @@ async function handleSwapEvent(eventLog) {
 
   const poolAddress = eventLog.address.toLowerCase();
   try {
-    const decodedData = web3.eth.abi.decodeLog(SWAP_EVENT_ABI, eventLog.data, eventLog.topics.slice(1));
+    const decodedData = web3.eth.abi.decodeLog(
+      SWAP_EVENT_ABI,
+      eventLog.data,
+      eventLog.topics.slice(1),
+    );
     poolStates[poolAddress] = {
       sqrtPriceX96: decodedData.sqrtPriceX96,
       tick: Number(decodedData.tick),
@@ -201,7 +287,9 @@ async function checkArbitrageOpportunity() {
   lastCallTime = now;
 
   const pancakeState = poolStates[pancakeswapV3PoolAddress.toLowerCase()];
-  const uniState = uniswapUSDTBNB_005_PoolAddress ? poolStates[uniswapUSDTBNB_005_PoolAddress.toLowerCase()] : null;
+  const uniState = uniswapUSDTBNB_005_PoolAddress
+    ? poolStates[uniswapUSDTBNB_005_PoolAddress.toLowerCase()]
+    : null;
 
   if (!pancakeState || !uniState) {
     log("⚠️ États des pools incomplets, impossible de vérifier l'arbitrage.");
@@ -209,39 +297,69 @@ async function checkArbitrageOpportunity() {
   }
 
   const pancakeswapV3Price = calculatePriceV3(
-    createV3Pool(WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOWEST, pancakeState.sqrtPriceX96, pancakeState.tick, pancakeState.liquidity)
+    createV3Pool(
+      WBNB_TOKEN,
+      USDT_TOKEN,
+      PANCAKESWAP_V3_FEE_TIERS.LOWEST,
+      pancakeState.sqrtPriceX96,
+      pancakeState.tick,
+      pancakeState.liquidity,
+    ),
   );
 
   const uniswap005Price = calculatePriceV3(
-    createV3Pool(USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOWEST, uniState.sqrtPriceX96, uniState.tick, uniState.liquidity)
+    createV3Pool(
+      USDT_TOKEN,
+      WBNB_TOKEN,
+      UNISWAP_V3_FEE_TIERS.LOWEST,
+      uniState.sqrtPriceX96,
+      uniState.tick,
+      uniState.liquidity,
+    ),
   );
 
-  if (!pancakeswapV3Price || !uniswap005Price || pancakeswapV3Price <= 0 || uniswap005Price <= 0) {
+  if (
+    !pancakeswapV3Price ||
+    !uniswap005Price ||
+    pancakeswapV3Price <= 0 ||
+    uniswap005Price <= 0
+  ) {
     log("❌ Erreur de calcul des prix spot.");
     return;
   }
 
-  log(`➡️ Prices Spot: Pancake V3: ${pancakeswapV3Price.toFixed(6)} | Uniswap V3: ${uniswap005Price.toFixed(6)}`);
+  log(
+    `➡️ Prices Spot: Pancake V3: ${pancakeswapV3Price.toFixed(6)} | Uniswap V3: ${uniswap005Price.toFixed(6)}`,
+  );
 
   // Calcul des spreads spot (directionnel)
-  const spreadUniToPancake = (pancakeswapV3Price - uniswap005Price) / uniswap005Price;   // Acheter sur Uni → vendre sur Pancake
-  const spreadPancakeToUni = (uniswap005Price - pancakeswapV3Price) / pancakeswapV3Price; // Acheter sur Pancake → vendre sur Uni
+  const spreadUniToPancake =
+    (pancakeswapV3Price - uniswap005Price) / uniswap005Price; // Acheter sur Uni → vendre sur Pancake
+  const spreadPancakeToUni =
+    (uniswap005Price - pancakeswapV3Price) / pancakeswapV3Price; // Acheter sur Pancake → vendre sur Uni
 
   const maxSpreadSpot = Math.max(spreadUniToPancake, spreadPancakeToUni);
 
   // Estimation du price impact (plus le montant est gros, plus on exige de spread)
   // Valeurs ajustées selon liquidité réelle observée sur BSC (Pancake ~3M$, Uniswap plus faible)
-  const BASE_FEE = VENUS_FLASH_LOAN_FEE + 0.0010; // Flashloan + 2 × 0.05% swap fees
+  const BASE_FEE = VENUS_FLASH_LOAN_FEE + 0.001; // Flashloan + 2 × 0.05% swap fees
 
-  log(`📊 Spread spot max: ${(maxSpreadSpot * 100).toFixed(3)}% | Seuil de base: ${(BASE_FEE * 100).toFixed(2)}%`);
+  log(
+    `📊 Spread spot max: ${(maxSpreadSpot * 100).toFixed(3)}% | Seuil de base: ${(BASE_FEE * 100).toFixed(2)}%`,
+  );
 
-  if (maxSpreadSpot < BASE_FEE + 0.0010) {  // Au minimum 0.10% de marge supplémentaire
-    log(`🛑 Spread spot trop faible (${(maxSpreadSpot * 100).toFixed(3)}%). Pas de simulation Quoter.`);
+  if (maxSpreadSpot < BASE_FEE + 0.001) {
+    // Au minimum 0.10% de marge supplémentaire
+    log(
+      `🛑 Spread spot trop faible (${(maxSpreadSpot * 100).toFixed(3)}%). Pas de simulation Quoter.`,
+    );
     return;
   }
 
   // --- Simulation réelle uniquement si spread spot prometteur ---
-  log(`🔍 Spread spot intéressant (${(maxSpreadSpot * 100).toFixed(3)}%). Lancement simulation Quoter...`);
+  log(
+    `🔍 Spread spot intéressant (${(maxSpreadSpot * 100).toFixed(3)}%). Lancement simulation Quoter...`,
+  );
 
   const usdtDecimals = TOKEN_DECIMALS[USDT_ADDRESS.toLowerCase()];
   const testAmounts = [1000, 3000, 6000, 10000, 15000];
@@ -251,24 +369,35 @@ async function checkArbitrageOpportunity() {
     loanAmountUSDT: 0n,
     bnbOut: 0n,
     finalUSDTOut: 0n,
-    path: ""
+    path: "",
   };
 
   for (let loanAmountNum of testAmounts) {
     if (loanAmountNum > MAX_LOAN_AMOUNT_USDT) break;
 
-    const currentLoanAmountUSDT = parseUnits(loanAmountNum.toString(), usdtDecimals);
+    const currentLoanAmountUSDT = parseUnits(
+      loanAmountNum.toString(),
+      usdtDecimals,
+    );
 
     // Direction 1: UniV3 (USDT→WBNB) → PancakeV3 (WBNB→USDT)
     const bnbFromUni = await getAmountOutV3(
-      USDT_TOKEN, WBNB_TOKEN, UNISWAP_V3_FEE_TIERS.LOWEST,
-      currentLoanAmountUSDT, ethersProvider, UNISWAP_V3_QUOTER_V2
+      USDT_TOKEN,
+      WBNB_TOKEN,
+      UNISWAP_V3_FEE_TIERS.LOWEST,
+      currentLoanAmountUSDT,
+      ethersProvider,
+      UNISWAP_V3_QUOTER_V2,
     );
 
     if (bnbFromUni && bnbFromUni > 0n) {
       const usdtFromPancake = await getAmountOutV3(
-        WBNB_TOKEN, USDT_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOWEST,
-        bnbFromUni, ethersProvider, PANCAKESWAP_V3_QUOTER_V2
+        WBNB_TOKEN,
+        USDT_TOKEN,
+        PANCAKESWAP_V3_FEE_TIERS.LOWEST,
+        bnbFromUni,
+        ethersProvider,
+        PANCAKESWAP_V3_QUOTER_V2,
       );
 
       if (usdtFromPancake && usdtFromPancake > 0n) {
@@ -281,7 +410,7 @@ async function checkArbitrageOpportunity() {
             loanAmountUSDT: currentLoanAmountUSDT,
             bnbOut: bnbFromUni,
             finalUSDTOut: usdtFromPancake,
-            path: "UniV3 → PancakeV3"
+            path: "UniV3 → PancakeV3",
           };
         }
       }
@@ -289,14 +418,22 @@ async function checkArbitrageOpportunity() {
 
     // Direction 2: PancakeV3 (USDT→WBNB) → UniV3 (WBNB→USDT)
     const bnbFromPancake = await getAmountOutV3(
-      USDT_TOKEN, WBNB_TOKEN, PANCAKESWAP_V3_FEE_TIERS.LOWEST,
-      currentLoanAmountUSDT, ethersProvider, PANCAKESWAP_V3_QUOTER_V2
+      USDT_TOKEN,
+      WBNB_TOKEN,
+      PANCAKESWAP_V3_FEE_TIERS.LOWEST,
+      currentLoanAmountUSDT,
+      ethersProvider,
+      PANCAKESWAP_V3_QUOTER_V2,
     );
 
     if (bnbFromPancake && bnbFromPancake > 0n) {
       const usdtFromUni = await getAmountOutV3(
-        WBNB_TOKEN, USDT_TOKEN, UNISWAP_V3_FEE_TIERS.LOWEST,
-        bnbFromPancake, ethersProvider, UNISWAP_V3_QUOTER_V2
+        WBNB_TOKEN,
+        USDT_TOKEN,
+        UNISWAP_V3_FEE_TIERS.LOWEST,
+        bnbFromPancake,
+        ethersProvider,
+        UNISWAP_V3_QUOTER_V2,
       );
 
       if (usdtFromUni && usdtFromUni > 0n) {
@@ -309,7 +446,7 @@ async function checkArbitrageOpportunity() {
             loanAmountUSDT: currentLoanAmountUSDT,
             bnbOut: bnbFromPancake,
             finalUSDTOut: usdtFromUni,
-            path: "PancakeV3 → UniV3"
+            path: "PancakeV3 → UniV3",
           };
         }
       }
@@ -318,10 +455,17 @@ async function checkArbitrageOpportunity() {
 
   // --- Logging CSV (inchangé) ---
   const timestampForCsv = new Date().toISOString();
-  const differencePercent = Math.abs((100 - (pancakeswapV3Price * 100) / uniswap005Price).toFixed(3)) || 0;
-  const profitUniToPancake = bestOpp.path === "UniV3 → PancakeV3" ? bestOpp.profit : 0;
-  const profitPancakeToUni = bestOpp.path === "PancakeV3 → UniV3" ? bestOpp.profit : 0;
-  const loanAmountForCsv = bestOpp.loanAmountUSDT > 0n ? formatUnits(bestOpp.loanAmountUSDT, usdtDecimals) : "0";
+  const differencePercent =
+    Math.abs((100 - (pancakeswapV3Price * 100) / uniswap005Price).toFixed(3)) ||
+    0;
+  const profitUniToPancake =
+    bestOpp.path === "UniV3 → PancakeV3" ? bestOpp.profit : 0;
+  const profitPancakeToUni =
+    bestOpp.path === "PancakeV3 → UniV3" ? bestOpp.profit : 0;
+  const loanAmountForCsv =
+    bestOpp.loanAmountUSDT > 0n
+      ? formatUnits(bestOpp.loanAmountUSDT, usdtDecimals)
+      : "0";
 
   const csvRow = `${timestampForCsv},${pancakeswapV3Price.toFixed(4)},${uniswap005Price.toFixed(4)},${profitUniToPancake.toFixed(4)},${profitPancakeToUni.toFixed(4)},${differencePercent},${parseFloat(loanAmountForCsv).toFixed(0)}\n`;
 
@@ -334,24 +478,31 @@ async function checkArbitrageOpportunity() {
     const loanAmountStr = formatUnits(bestOpp.loanAmountUSDT, usdtDecimals);
     const msg = `💰 OPPORTUNITÉ PROFITABLE: ${bestOpp.path} | Profit: ${bestOpp.profit.toFixed(4)} USD | Loan: ${loanAmountStr} USDT`;
     log(msg);
-    sendSlackNotification(`Arbitrage Triggered (${bestOpp.path})\n${msg}`, "info");
+    sendSlackNotification(
+      `Arbitrage Triggered (${bestOpp.path})\n${msg}`,
+      "info",
+    );
 
     const isUniFirst = bestOpp.path.startsWith("Uni");
 
     const swap1Params = {
       tokenIn: USDT_ADDRESS,
       tokenOut: WBNB_ADDRESS,
-      fee: isUniFirst ? UNISWAP_V3_FEE_TIERS.LOWEST : PANCAKESWAP_V3_FEE_TIERS.LOWEST,
+      fee: isUniFirst
+        ? UNISWAP_V3_FEE_TIERS.LOWEST
+        : PANCAKESWAP_V3_FEE_TIERS.LOWEST,
       exchange: isUniFirst ? DEX.UNISWAP : DEX.PANCAKESWAP,
-      amountOutMin: 0n
+      amountOutMin: 0n,
     };
 
     const swap2Params = {
       tokenIn: WBNB_ADDRESS,
       tokenOut: USDT_ADDRESS,
-      fee: isUniFirst ? PANCAKESWAP_V3_FEE_TIERS.LOWEST : UNISWAP_V3_FEE_TIERS.LOWEST,
+      fee: isUniFirst
+        ? PANCAKESWAP_V3_FEE_TIERS.LOWEST
+        : UNISWAP_V3_FEE_TIERS.LOWEST,
       exchange: isUniFirst ? DEX.PANCAKESWAP : DEX.UNISWAP,
-      amountOutMin: 0n
+      amountOutMin: 0n,
     };
 
     await executeFlashLoanArbitrage(
@@ -360,37 +511,43 @@ async function checkArbitrageOpportunity() {
       bestOpp.loanAmountUSDT,
       swap1Params,
       swap2Params,
-      bestOpp
+      bestOpp,
     );
   } else {
-    log(`💤 Aucune opportunité rentable après simulation. Meilleur profit: ${bestOpp.profit.toFixed(4)} USD (seuil: ${PROFIT_THRESHOLD_USD})`);
+    log(
+      `💤 Aucune opportunité rentable après simulation. Meilleur profit: ${bestOpp.profit.toFixed(4)} USD (seuil: ${PROFIT_THRESHOLD_USD})`,
+    );
   }
 }
 
 /**
  * --- NOUVEAU : Démarre le watchdog pour surveiller l'activité. ---
  */
+/**
+ * --- Watchdog : si pas d'activité pendant 5 min → on switch de RPC (unifié avec le failover)
+ */
 function startWatchdog() {
-  log("🐶 Watchdog activé. Vérification de l'activité toutes les 30 secondes...");
-  // S'assurer qu'il n'y a pas d'intervalle précédent qui tourne
+  log("🐶 Watchdog activé (5 min d'inactivité → switch RPC automatique)");
+
   if (watchdogInterval) clearInterval(watchdogInterval);
+
+  lastActivityTime = Date.now(); // reset à chaque (re)démarrage
 
   watchdogInterval = setInterval(() => {
     const now = Date.now();
     const timeSinceLastActivity = now - lastActivityTime;
 
     if (timeSinceLastActivity > WATCHDOG_TIMEOUT_MS) {
-      log(`🔴 Inactivité détectée depuis plus de 5 minutes. Redémarrage du bot...`);
-      // Arrêter le watchdog actuel pour éviter des redémarrages multiples
-      clearInterval(watchdogInterval);
-      watchdogInterval = null; 
+      log(`🔴 Inactivité détectée (>5 min). Lancement du failover RPC...`);
 
-      // Procédure de redémarrage
-      stopBot(); // Nettoie les connexions
-      setTimeout(() => {
-        log("🔄 Tentative de redémarrage du bot après inactivité.");
-        startBot(); // Relance le bot
-      }, 2000); // Petit délai pour s'assurer que tout est bien fermé
+      // === IMPORTANT : on n'appelle plus stop/start manuellement ===
+      // On passe par le même chemin que les erreurs WS
+      if (watchdogInterval) {
+        clearInterval(watchdogInterval);
+        watchdogInterval = null;
+      }
+
+      rpcManager.switchToNextRpc(); // ← c’est tout !
     }
   }, WATCHDOG_CHECK_INTERVAL_MS);
 }
@@ -400,26 +557,43 @@ function startWatchdog() {
  */
 async function startBot() {
   try {
+    if (restartTimer) {
+      clearTimeout(restartTimer);
+      restartTimer = null;
+    }
+
     initializeProvidersAndSubscriptions();
     await loadPoolsAndInitialStates();
-    const SWAP_EVENT_TOPIC_V3 = web3.utils.sha3("Swap(address,address,int256,int256,uint160,uint128,int24)");
+    const SWAP_EVENT_TOPIC_V3 = web3.utils.sha3(
+      "Swap(address,address,int256,int256,uint160,uint128,int24)",
+    );
     log("🚀 Bot started. Listening for swaps...");
 
     if (pancakeswapV3PoolAddress) {
-      subscriptionPancakeV3 = await web3.eth.subscribe("logs", { topics: [SWAP_EVENT_TOPIC_V3], address: [pancakeswapV3PoolAddress] });
+      subscriptionPancakeV3 = await web3.eth.subscribe("logs", {
+        topics: [SWAP_EVENT_TOPIC_V3],
+        address: [pancakeswapV3PoolAddress],
+      });
       if (subscriptionPancakeV3) {
         subscriptionPancakeV3.on("data", handleSwapEvent);
-        subscriptionPancakeV3.on("error", (err) => log("❌ PancakeSwap V3 sub error:", err.message));
+        subscriptionPancakeV3.on("error", (err) =>
+          log("❌ PancakeSwap V3 sub error:", err.message),
+        );
       } else {
         throw new Error("Failed to create PancakeSwap V3 subscription.");
       }
     }
-    
+
     if (uniswapUSDTBNB_005_PoolAddress) {
-      subscriptionUniswapV3_005 = await web3.eth.subscribe("logs", { topics: [SWAP_EVENT_TOPIC_V3], address: [uniswapUSDTBNB_005_PoolAddress] });
+      subscriptionUniswapV3_005 = await web3.eth.subscribe("logs", {
+        topics: [SWAP_EVENT_TOPIC_V3],
+        address: [uniswapUSDTBNB_005_PoolAddress],
+      });
       if (subscriptionUniswapV3_005) {
         subscriptionUniswapV3_005.on("data", handleSwapEvent);
-        subscriptionUniswapV3_005.on("error", (err) => log("❌ Uniswap V3 sub error:", err.message));
+        subscriptionUniswapV3_005.on("error", (err) =>
+          log("❌ Uniswap V3 sub error:", err.message),
+        );
       } else {
         throw new Error("Failed to create Uniswap V3 subscription.");
       }
@@ -427,11 +601,12 @@ async function startBot() {
 
     // --- NOUVEAU : Démarrer le watchdog une fois que tout est initialisé ---
     startWatchdog();
-
   } catch (err) {
     log(`❌ Fatal error during bot startup: ${err.message}`);
     log("Retrying in 10 seconds...");
-    setTimeout(startBot, 10000);
+
+    // 2. On stocke le minuteur dans la variable globale pour pouvoir l'annuler
+    restartTimer = setTimeout(startBot, 10000);
   }
 }
 
@@ -439,20 +614,32 @@ async function startBot() {
  * Arrête proprement le bot et ferme les connexions.
  */
 function stopBot() {
-    log("Stopping bot...");
-    
-    // --- NOUVEAU : Arrêter le watchdog pour éviter les faux positifs ---
-    if (watchdogInterval) {
-        clearInterval(watchdogInterval);
-        watchdogInterval = null;
-        log("🐶 Watchdog désactivé.");
+  log("Stopping bot...");
+
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+
+  if (watchdogInterval) {
+    clearInterval(watchdogInterval);
+    watchdogInterval = null;
+    log("🐶 Watchdog désactivé.");
+  }
+
+  cleanupSubscriptions();
+
+  if (web3 && web3.currentProvider) {
+    // FIX CRUCIAL : On retire les écouteurs avant de couper
+    // pour empêcher Web3 de spammer "error" ou "end" pendant la fermeture
+    web3.currentProvider.removeAllListeners("error");
+    web3.currentProvider.removeAllListeners("end");
+
+    if (web3.currentProvider.disconnect) {
+      web3.currentProvider.disconnect();
+      log("🔴 WebSocket connection closed.");
     }
-    
-    cleanupSubscriptions();
-    if (web3 && web3.currentProvider && web3.currentProvider.disconnect) {
-        web3.currentProvider.disconnect();
-        log("🔴 WebSocket connection closed.");
-    }
+  }
 }
 
 // Lancement
@@ -460,6 +647,6 @@ startBot();
 
 // Gestion de la fermeture propre (CTRL+C)
 process.on("SIGINT", () => {
-    stopBot();
-    process.exit(0);
+  stopBot();
+  process.exit(0);
 });
