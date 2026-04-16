@@ -46,7 +46,6 @@ const {
   TOKEN_DECIMALS,
   PROFIT_THRESHOLD_USD,
   VENUS_FLASH_LOAN_FEE,
-  MAX_LOAN_AMOUNT_USDT,
   PANCAKESWAP_V3_FACTORY,
   PANCAKESWAP_V3_FEE_TIERS,
   PANCAKESWAP_V3_QUOTER_V2,
@@ -54,8 +53,11 @@ const {
   UNISWAP_V3_QUOTER_V2,
   RPC_ENDPOINTS,
   UNISWAP_V3_FEE_TIERS,
+  TEST_AMOUNTS,
   FLASH_LOAN_CONTRACT_ADDRESS,
 } = config;
+
+const priceRange = process.env.priceRange
 
 // Import des utilitaires et ABIs
 const {
@@ -386,12 +388,9 @@ async function checkArbitrageOpportunity() {
   }
 
   // --- Simulation réelle uniquement si spread spot prometteur ---
-  log(
-    `🔍 Spread spot intéressant (${(maxSpreadSpot * 100).toFixed(3)}%). Lancement simulation Quoter...`,
-  );
+  log(`🔍 Spread spot intéressant (${(maxSpreadSpot * 100).toFixed(3)}%). Lancement simulation Quoter...`,);
 
   const usdtDecimals = TOKEN_DECIMALS[USDT_ADDRESS.toLowerCase()];
-  const testAmounts = [1000, 3000, 6000, 10000, 15000];
 
   let bestOpp = {
     profit: -Infinity,
@@ -401,8 +400,7 @@ async function checkArbitrageOpportunity() {
     path: "",
   };
 
-  for (let loanAmountNum of testAmounts) {
-    if (loanAmountNum > MAX_LOAN_AMOUNT_USDT) break;
+  for (let loanAmountNum of TEST_AMOUNTS) {
 
     const currentLoanAmountUSDT = parseUnits(
       loanAmountNum.toString(),
@@ -432,6 +430,9 @@ async function checkArbitrageOpportunity() {
       if (usdtFromPancake && usdtFromPancake > 0n) {
         const received = parseFloat(formatUnits(usdtFromPancake, usdtDecimals));
         const profit = (received - loanAmountNum) * (1 - VENUS_FLASH_LOAN_FEE);
+        const effectiveSpread = (received / loanAmountNum) - 1;
+
+        log(` Loan ${loanAmountNum} USDT | Profit ${profit.toFixed(4)} | Eff. spread ${(effectiveSpread*100).toFixed(3)}%`);
 
         if (profit > bestOpp.profit) {
           bestOpp = {
@@ -468,6 +469,9 @@ async function checkArbitrageOpportunity() {
       if (usdtFromUni && usdtFromUni > 0n) {
         const received = parseFloat(formatUnits(usdtFromUni, usdtDecimals));
         const profit = (received - loanAmountNum) * (1 - VENUS_FLASH_LOAN_FEE);
+        const effectiveSpread = (received / loanAmountNum) - 1;
+
+        log(` Loan ${loanAmountNum} USDT | Profit ${profit.toFixed(4)} | Eff. spread ${(effectiveSpread*100).toFixed(3)}%`);
 
         if (profit > bestOpp.profit) {
           bestOpp = {

@@ -75,12 +75,22 @@ const RPC_ENDPOINTS = [
 const FLASH_LOAN_FEE = 0.0;
 
 // Montants de prêt pour la simulation
-const MIN_LOAN_AMOUNT_USDT = 1000;
-const MAX_LOAN_AMOUNT_USDT = 26000;
-const LOAN_AMOUNT_INCREMENT_USDT = 5000;
+let TEST_AMOUNTS = [];
+
+if (process.env.TEST_AMOUNTS) {
+  TEST_AMOUNTS = process.env.TEST_AMOUNTS.split(",") // sépare par virgule
+    .map((s) => parseFloat(s.trim())) // convertit en nombre
+    .filter((n) => !isNaN(n) && n > 0); // supprime les valeurs invalides
+} else {
+  // Valeur par défaut si oubli dans .env
+  TEST_AMOUNTS = [300, 600, 900, 1300, 2000, 3200];
+  console.warn(
+    "⚠️ TEST_AMOUNTS non défini dans .env → utilisation des valeurs par défaut",
+  );
+}
 
 // Seuil de profit net minimum en USD pour déclencher l'alerte
-const PROFIT_THRESHOLD_USD = 5;
+const PROFIT_THRESHOLD_USD = 2;
 
 // const SLIPPAGE_TOLERANCE = 0.005; // 0.5% de tolérance au slippage
 
@@ -112,9 +122,7 @@ module.exports = {
   VENUS_FLASH_LOAN_FEE: FLASH_LOAN_FEE,
   PROFIT_THRESHOLD_USD,
   EMAIL_CONFIG,
-  MIN_LOAN_AMOUNT_USDT,
-  MAX_LOAN_AMOUNT_USDT,
-  LOAN_AMOUNT_INCREMENT_USDT,
+  TEST_AMOUNTS,
 
   PANCAKESWAP_V3_QUOTER_V2,
   // SLIPPAGE_TOLERANCE,
