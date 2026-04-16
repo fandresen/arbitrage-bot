@@ -30,7 +30,7 @@ function getNextRpc() {
 
 function createHttpProvider() {
   const rpc = getCurrentRpc();
-  return new JsonRpcProvider(rpc.http);
+  return new JsonRpcProvider(rpc.http,56);
 }
 
 function createWsProvider() {

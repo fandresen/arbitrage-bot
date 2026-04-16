@@ -6,6 +6,34 @@ const { Web3 } = require("web3");
 const { parseUnits, formatUnits, JsonRpcProvider, ethers } = require("ethers");
 const { Token } = require("@uniswap/sdk-core");
 
+const originalConsoleLog = console.log;
+const originalConsoleWarn = console.warn;
+const originalConsoleError = console.error;
+
+console.log = (...args) => {
+  const message = args.join(" ");
+  if (message.includes("JsonRpcProvider failed to detect network")) {
+    return; // On ignore complètement ce message
+  }
+  originalConsoleLog(...args);
+};
+
+console.warn = (...args) => {
+  const message = args.join(" ");
+  if (message.includes("JsonRpcProvider failed to detect network")) {
+    return;
+  }
+  originalConsoleWarn(...args);
+};
+
+console.error = (...args) => {
+  const message = args.join(" ");
+  if (message.includes("JsonRpcProvider failed to detect network")) {
+    return;
+  }
+  originalConsoleError(...args);
+};
+
 const rpcManager = require("./utils/rpcManager");
 global.stopBot = stopBot;
 global.startBot = startBot;
@@ -104,6 +132,8 @@ if (!fs.existsSync(csvPath)) {
     "utf8",
   );
 }
+
+const BASE_SEUIL = process.env.BASE_SEUIL / 100;
 
 let lastCallTime = 0;
 const THROTTLE_INTERVAL_MS = 250;
@@ -342,13 +372,12 @@ async function checkArbitrageOpportunity() {
 
   // Estimation du price impact (plus le montant est gros, plus on exige de spread)
   // Valeurs ajustées selon liquidité réelle observée sur BSC (Pancake ~3M$, Uniswap plus faible)
-  const BASE_FEE = VENUS_FLASH_LOAN_FEE + 0.001; // Flashloan + 2 × 0.05% swap fees
 
   log(
-    `📊 Spread spot max: ${(maxSpreadSpot * 100).toFixed(3)}% | Seuil de base: ${(BASE_FEE * 100).toFixed(2)}%`,
+    `📊 Spread spot max: ${(maxSpreadSpot * 100).toFixed(3)}% | Seuil de base: ${(BASE_SEUIL * 100).toFixed(2)}%`,
   );
 
-  if (maxSpreadSpot < BASE_FEE + 0.001) {
+  if (maxSpreadSpot < BASE_SEUIL) {
     // Au minimum 0.10% de marge supplémentaire
     log(
       `🛑 Spread spot trop faible (${(maxSpreadSpot * 100).toFixed(3)}%). Pas de simulation Quoter.`,
